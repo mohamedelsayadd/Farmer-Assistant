@@ -10,6 +10,7 @@ from core.config import get_settings
 from core.logging import configure_logging
 from memory.redis_memory import RedisMemory
 from providers.llm import LLMProvider
+from providers.renile_client import ReNileClient
 from services.chat_service import ChatService
 
 
@@ -27,8 +28,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         max_messages=settings.redis_memory_max_messages,
     )
     llm = LLMProvider(settings)
+    renile_client = ReNileClient(settings)
     app.state.redis = redis
-    app.state.chat_service = ChatService(memory=memory, agent=FarmerAssistantAgent(llm))
+    app.state.chat_service = ChatService(memory=memory, agent=FarmerAssistantAgent(llm, renile_client))
 
     try:
         yield
