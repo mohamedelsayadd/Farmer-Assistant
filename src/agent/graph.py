@@ -1,5 +1,6 @@
 import json
 import logging
+from dataclasses import dataclass
 from time import perf_counter
 from typing import Any, NotRequired, TypedDict
 
@@ -23,7 +24,20 @@ class AgentState(TypedDict):
     messages: list[dict[str, Any]]
     assistant_message: NotRequired[Any]
     tool_results: NotRequired[list[dict[str, Any]]]
+    tool_contexts: NotRequired[list["ToolContext"]]
     final_response: NotRequired[str]
+
+
+@dataclass(frozen=True)
+class ToolContext:
+    tool_name: str
+    content: str
+
+
+@dataclass(frozen=True)
+class AgentResult:
+    response: str
+    tool_contexts: list[ToolContext]
 
 
 class FarmerAssistantAgent:
@@ -32,7 +46,7 @@ class FarmerAssistantAgent:
         self._renile_client = renile_client
         self._graph = self._build_graph()
 
-    async def run(self, jwt: str, user_message: str, history: list[MemoryMessage]) -> str:
+    async def run(self, jwt: str, user_message: str, history: list[MemoryMessage]) -> AgentResult:
         started_at = perf_counter()
         logger.info(
             "agent_run_started history_messages=%s user_message_chars=%s",
@@ -48,8 +62,14 @@ class FarmerAssistantAgent:
         result = await self._graph.ainvoke(initial_state)
         final_response = result.get("final_response") or "معلش، حصلت مشكلة مؤقتة. جرّب تاني بعد شوية."
         elapsed_ms = int((perf_counter() - started_at) * 1000)
-        logger.info("agent_run_completed response_chars=%s latency_ms=%s", len(final_response), elapsed_ms)
-        return final_response
+        tool_contexts = result.get("tool_contexts", [])
+        logger.info(
+            "agent_run_completed response_chars=%s tool_contexts=%s latency_ms=%s",
+            len(final_response),
+            len(tool_contexts),
+            elapsed_ms,
+        )
+        return AgentResult(response=final_response, tool_contexts=tool_contexts)
 
     def _build_graph(self) -> Any:
         graph = StateGraph(AgentState)
@@ -76,6 +96,7 @@ class FarmerAssistantAgent:
     async def _tools_node(self, state: AgentState) -> dict[str, Any]:
         assistant_message = state["assistant_message"]
         tool_results: list[dict[str, Any]] = []
+        tool_contexts: list[ToolContext] = []
         for tool_call in assistant_message.tool_calls or []:
             try:
                 logger.info(
@@ -96,6 +117,12 @@ class FarmerAssistantAgent:
                     tool_call.id,
                     tool_call.function.name,
                     json_preview(result),
+                )
+                tool_contexts.append(
+                    ToolContext(
+                        tool_name=tool_call.function.name,
+                        content=json.dumps(result, ensure_ascii=False),
+                    )
                 )
                 tool_results.append(
                     {
@@ -120,7 +147,7 @@ class FarmerAssistantAgent:
                     }
                 )
 
-        return {"tool_results": tool_results}
+        return {"tool_results": tool_results, "tool_contexts": tool_contexts}
 
     async def _final_node(self, state: AgentState) -> dict[str, str]:
         assistant_message = state["assistant_message"]
@@ -152,6 +179,21 @@ class FarmerAssistantAgent:
     @staticmethod
     def _build_messages(history: list[MemoryMessage], user_message: str) -> list[dict[str, Any]]:
         messages: list[dict[str, Any]] = [{"role": "system", "content": SYSTEM_PROMPT}]
-        messages.extend({"role": message["role"], "content": message["content"]} for message in history)
+        messages.extend(FarmerAssistantAgent._history_message(message) for message in history)
         messages.append({"role": "user", "content": user_message})
         return messages
+
+    @staticmethod
+    def _history_message(message: MemoryMessage) -> dict[str, Any]:
+        if message["role"] == "tool_context":
+            tool_name = message.get("tool_name", "unknown_tool")
+            logger.info("agent_context_included tool_name=%s content_chars=%s", tool_name, len(message["content"]))
+            return {
+                "role": "system",
+                "content": (
+                    f"Cached tool result from {tool_name}. Use it for follow-up questions if relevant. "
+                    "Do not call the API again unless the user clearly asks for fresh or updated readings.\n\n"
+                    f"{message['content']}"
+                ),
+            }
+        return {"role": message["role"], "content": message["content"]}

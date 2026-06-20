@@ -56,7 +56,7 @@ class FakeRedis:
 @pytest.mark.asyncio
 async def test_memory_trims_to_max_messages_and_sets_ttl() -> None:
     redis = FakeRedis()
-    memory = RedisMemory(redis=redis, ttl_seconds=3600, max_messages=14)  # type: ignore[arg-type]
+    memory = RedisMemory(redis=redis, ttl_seconds=3600, max_messages=12)  # type: ignore[arg-type]
 
     for index in range(20):
         await memory.append("conversation-1", "user", f"message-{index}")
@@ -64,18 +64,36 @@ async def test_memory_trims_to_max_messages_and_sets_ttl() -> None:
     messages = await memory.load("conversation-1")
 
 
-    assert len(messages) == 14
-    assert messages[0]["content"] == "message-6"
+    assert len(messages) == 12
+    assert messages[0]["content"] == "message-8"
     assert redis.ttls["conversation:conversation-1"] == 3600
 
 
 @pytest.mark.asyncio
 async def test_memory_does_not_store_jwt() -> None:
     redis = FakeRedis()
-    memory = RedisMemory(redis=redis, ttl_seconds=3600, max_messages=14)  # type: ignore[arg-type]
+    memory = RedisMemory(redis=redis, ttl_seconds=3600, max_messages=12)  # type: ignore[arg-type]
 
     await memory.append("conversation-1", "user", "درجة الحرارة كام؟")
 
     stored_payload = json.dumps(redis.data, ensure_ascii=False)
 
     assert "secret-jwt" not in stored_payload
+
+
+@pytest.mark.asyncio
+async def test_memory_stores_and_loads_tool_context() -> None:
+    redis = FakeRedis()
+    memory = RedisMemory(redis=redis, ttl_seconds=3600, max_messages=12)  # type: ignore[arg-type]
+
+    await memory.append_tool_context("conversation-1", "get_current_readings", '{"devices": []}')
+
+    messages = await memory.load("conversation-1")
+
+    assert messages == [
+        {
+            "role": "tool_context",
+            "tool_name": "get_current_readings",
+            "content": '{"devices": []}',
+        }
+    ]

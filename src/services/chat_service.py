@@ -30,21 +30,33 @@ class ChatService:
                 request.conversation_id,
                 len(history),
             )
-            assistant_message = await self._agent.run(
+            agent_result = await self._agent.run(
                 jwt=request.jwt,
                 user_message=request.message,
                 history=history,
             )
             await self._memory.append(request.conversation_id, "user", request.message)
-            await self._memory.append(request.conversation_id, "assistant", assistant_message)
+            for tool_context in agent_result.tool_contexts:
+                await self._memory.append_tool_context(
+                    conversation_id=request.conversation_id,
+                    tool_name=tool_context.tool_name,
+                    content=tool_context.content,
+                )
+                logger.info(
+                    "chat_tool_context_saved conversation_id=%s tool_name=%s content_chars=%s",
+                    request.conversation_id,
+                    tool_context.tool_name,
+                    len(tool_context.content),
+                )
+            await self._memory.append(request.conversation_id, "assistant", agent_result.response)
             elapsed_ms = int((perf_counter() - started_at) * 1000)
             logger.info(
                 "chat_request_completed conversation_id=%s response_chars=%s latency_ms=%s",
                 request.conversation_id,
-                len(assistant_message),
+                len(agent_result.response),
                 elapsed_ms,
             )
-            return ChatResponse(conversation_id=request.conversation_id, message=assistant_message)
+            return ChatResponse(conversation_id=request.conversation_id, message=agent_result.response)
         except (OpenAIError, RedisError):
             elapsed_ms = int((perf_counter() - started_at) * 1000)
             logger.exception(
