@@ -15,9 +15,9 @@ class Settings(BaseSettings):
     app_env: str = Field(alias="APP_ENV")
     log_level: str = Field(alias="LOG_LEVEL")
 
-    dashscope_api_key: str = Field(alias="DASHSCOPE_API_KEY")
-    dashscope_base_url: str = Field(alias="DASHSCOPE_BASE_URL")
-    dashscope_model: str = Field(alias="DASHSCOPE_MODEL")
+    llm_api_key: str = Field(alias="LLM_API_KEY")
+    llm_base_url: str = Field(alias="LLM_BASE_URL")
+    llm_model: str = Field(alias="LLM_MODEL")
 
     redis_url: str = Field(alias="REDIS_URL")
     redis_memory_ttl_seconds: int = Field(alias="REDIS_MEMORY_TTL_SECONDS", gt=0)

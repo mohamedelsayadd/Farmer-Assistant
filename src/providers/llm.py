@@ -12,10 +12,10 @@ logger = logging.getLogger(__name__)
 class LLMProvider:
     def __init__(self, settings: Settings) -> None:
         self._client = AsyncOpenAI(
-            api_key=settings.dashscope_api_key,
-            base_url=settings.dashscope_base_url,
+            api_key=settings.llm_api_key,
+            base_url=settings.llm_base_url,
         )
-        self._model = settings.dashscope_model
+        self._model = settings.llm_model
 
     async def chat(self, messages: list[dict[str, Any]], tools: list[dict[str, Any]] | None = None) -> Any:
         started_at = perf_counter()
