@@ -15,6 +15,8 @@ from providers.llm import LLMProvider
 from providers.renile_client import ReNileClient
 
 logger = logging.getLogger(__name__)
+CURRENT_TOOL_NAMES = {"get_current_readings"}
+HISTORICAL_TOOL_NAMES = {"get_devices_ids"}
 
 
 class AgentState(TypedDict):
@@ -74,11 +76,17 @@ class FarmerAssistantAgent:
     def _build_graph(self) -> Any:
         graph = StateGraph(AgentState)
         graph.add_node("agent", self._agent_node)
-        graph.add_node("tools", self._tools_node)
+        graph.add_node("current_tools", self._current_tools_node)
+        graph.add_node("historical_tools", self._historical_tools_node)
         graph.add_node("final", self._final_node)
         graph.set_entry_point("agent")
-        graph.add_conditional_edges("agent", self._should_call_tools, {"tools": "tools", "final": "final"})
-        graph.add_edge("tools", "final")
+        graph.add_conditional_edges(
+            "agent",
+            self._tool_path,
+            {"current_tools": "current_tools", "historical_tools": "historical_tools", "final": "final"},
+        )
+        graph.add_edge("current_tools", "final")
+        graph.add_edge("historical_tools", "final")
         graph.add_edge("final", END)
         return graph.compile()
 
@@ -93,61 +101,80 @@ class FarmerAssistantAgent:
         )
         return {"assistant_message": assistant_message}
 
-    async def _tools_node(self, state: AgentState) -> dict[str, Any]:
+    async def _current_tools_node(self, state: AgentState) -> dict[str, Any]:
+        logger.info("current_tools_node_started")
+        return await self._execute_tool_calls(state, CURRENT_TOOL_NAMES)
+
+    async def _historical_tools_node(self, state: AgentState) -> dict[str, Any]:
+        logger.info("historical_tools_node_started")
+        return await self._execute_tool_calls(state, HISTORICAL_TOOL_NAMES)
+
+    async def _execute_tool_calls(self, state: AgentState, allowed_tool_names: set[str]) -> dict[str, Any]:
         assistant_message = state["assistant_message"]
         tool_results: list[dict[str, Any]] = []
         tool_contexts: list[ToolContext] = []
         for tool_call in assistant_message.tool_calls or []:
-            try:
-                logger.info(
-                    "tool_call_started tool_call_id=%s tool_name=%s raw_arguments=%s",
-                    tool_call.id,
-                    tool_call.function.name,
-                    tool_call.function.arguments,
-                )
-                arguments = json.loads(tool_call.function.arguments or "{}")
-                result = await execute_tool(
-                    tool_call.function.name,
-                    jwt=state["jwt"],
-                    arguments=arguments,
-                    renile_client=self._renile_client,
-                )
-                logger.info(
-                    "tool_call_completed tool_call_id=%s tool_name=%s result_preview=%s",
-                    tool_call.id,
-                    tool_call.function.name,
-                    json_preview(result),
-                )
-                tool_contexts.append(
-                    ToolContext(
-                        tool_name=tool_call.function.name,
-                        content=json.dumps(result, ensure_ascii=False),
-                    )
-                )
-                tool_results.append(
-                    {
-                        "role": "tool",
-                        "tool_call_id": tool_call.id,
-                        "name": tool_call.function.name,
-                        "content": json.dumps(result, ensure_ascii=False),
-                    }
-                )
-            except (json.JSONDecodeError, ValueError, httpx.HTTPError):
-                logger.exception(
-                    "tool_call_failed tool_call_id=%s tool_name=%s",
-                    tool_call.id,
-                    tool_call.function.name,
-                )
-                tool_results.append(
-                    {
-                        "role": "tool",
-                        "tool_call_id": tool_call.id,
-                        "name": tool_call.function.name,
-                        "content": "Tool failed temporarily.",
-                    }
-                )
+            if tool_call.function.name not in allowed_tool_names:
+                self._log_skipped_tool_call(tool_call, allowed_tool_names)
+                continue
+            tool_result, tool_context = await self._execute_tool_call(state["jwt"], tool_call)
+            tool_results.append(tool_result)
+            if tool_context:
+                tool_contexts.append(tool_context)
 
         return {"tool_results": tool_results, "tool_contexts": tool_contexts}
+
+    async def _execute_tool_call(self, jwt: str, tool_call: Any) -> tuple[dict[str, Any], ToolContext | None]:
+        try:
+            logger.info(
+                "tool_call_started tool_call_id=%s tool_name=%s raw_arguments=%s",
+                tool_call.id,
+                tool_call.function.name,
+                tool_call.function.arguments,
+            )
+            arguments = json.loads(tool_call.function.arguments or "{}")
+            tool_result = await execute_tool(
+                tool_call.function.name,
+                jwt=jwt,
+                arguments=arguments,
+                renile_client=self._renile_client,
+            )
+            return self._successful_tool_result(tool_call, tool_result)
+        except (json.JSONDecodeError, ValueError, httpx.HTTPError):
+            logger.exception("tool_call_failed tool_call_id=%s tool_name=%s", tool_call.id, tool_call.function.name)
+            return self._failed_tool_result(tool_call), None
+
+    @staticmethod
+    def _successful_tool_result(tool_call: Any, tool_result: dict[str, Any]) -> tuple[dict[str, Any], ToolContext]:
+        logger.info(
+            "tool_call_completed tool_call_id=%s tool_name=%s result_preview=%s",
+            tool_call.id,
+            tool_call.function.name,
+            json_preview(tool_result),
+        )
+        content = json.dumps(tool_result, ensure_ascii=False)
+        return (
+            {"role": "tool", "tool_call_id": tool_call.id, "name": tool_call.function.name, "content": content},
+            ToolContext(tool_name=tool_call.function.name, content=content),
+        )
+
+    @staticmethod
+    def _failed_tool_result(tool_call: Any) -> dict[str, Any]:
+        return {
+            "role": "tool",
+            "tool_call_id": tool_call.id,
+            "name": tool_call.function.name,
+            "content": "Tool failed temporarily.",
+        }
+
+    @staticmethod
+    def _log_skipped_tool_call(tool_call: Any, allowed_tool_names: set[str]) -> None:
+        logger.info(
+            "tool_call_skipped tool_call_id=%s tool_name=%s allowed_tools=%s",
+            tool_call.id,
+            tool_call.function.name,
+            sorted(allowed_tool_names),
+        )
 
     async def _final_node(self, state: AgentState) -> dict[str, str]:
         assistant_message = state["assistant_message"]
@@ -170,10 +197,20 @@ class FarmerAssistantAgent:
         return {"final_response": final_response}
 
     @staticmethod
-    def _should_call_tools(state: AgentState) -> str:
+    def _tool_path(state: AgentState) -> str:
         assistant_message = state["assistant_message"]
-        if getattr(assistant_message, "tool_calls", None):
-            return "tools"
+        tool_calls = getattr(assistant_message, "tool_calls", None) or []
+        if not tool_calls:
+            logger.info("tool_path_selected path=final")
+            return "final"
+        tool_name = tool_calls[0].function.name
+        if tool_name in CURRENT_TOOL_NAMES:
+            logger.info("tool_path_selected path=current_tools tool_name=%s", tool_name)
+            return "current_tools"
+        if tool_name in HISTORICAL_TOOL_NAMES:
+            logger.info("tool_path_selected path=historical_tools tool_name=%s", tool_name)
+            return "historical_tools"
+        logger.warning("tool_path_selected path=final unknown_tool=%s", tool_name)
         return "final"
 
     @staticmethod

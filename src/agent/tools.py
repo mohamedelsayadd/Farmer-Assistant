@@ -4,6 +4,7 @@ from typing import Any
 from core.logging import json_preview
 from providers.renile_client import ReNileClient
 from services.current_readings_processor import process_current_readings
+from services.devices_ids_processor import process_devices_ids
 
 logger = logging.getLogger(__name__)
 
@@ -25,28 +26,11 @@ OPENAI_TOOLS: list[dict[str, Any]] = [
     {
         "type": "function",
         "function": {
-            "name": "get_historical_readings",
-            "description": "Get historical farm sensor readings. Use for old readings, yesterday, last week, trends, comparisons, or date ranges.",
+            "name": "get_devices_ids",
+            "description": "Get the user's available farm devices and their IDs. Required before answering historical readings questions.",
             "parameters": {
                 "type": "object",
-                "properties": {
-                    "device_id": {
-                        "type": ["string", "null"],
-                        "description": "Optional device identifier if the farmer specified one.",
-                    },
-                    "metric": {
-                        "type": ["string", "null"],
-                        "description": "Optional reading metric, such as temperature, humidity, or soil_moisture.",
-                    },
-                    "from_date": {
-                        "type": ["string", "null"],
-                        "description": "Optional start date in ISO format when known.",
-                    },
-                    "to_date": {
-                        "type": ["string", "null"],
-                        "description": "Optional end date in ISO format when known.",
-                    },
-                },
+                "properties": {},
                 "required": [],
                 "additionalProperties": False,
             },
@@ -66,6 +50,19 @@ async def execute_current_readings_tool(jwt: str, renile_client: ReNileClient) -
         json_preview(processed_readings),
     )
     return processed_readings
+
+
+async def execute_devices_ids_tool(jwt: str, renile_client: ReNileClient) -> dict[str, Any]:
+    logger.info("tool_devices_ids_started")
+    raw_devices = await renile_client.get_devices_ids(jwt)
+    devices_ids = process_devices_ids(raw_devices)
+    logger.info(
+        "tool_devices_ids_completed raw_devices=%s processed_devices=%s result_preview=%s",
+        len(raw_devices),
+        len(devices_ids["devices"]),
+        json_preview(devices_ids),
+    )
+    return devices_ids
 
 
 async def execute_historical_readings_tool(
@@ -108,6 +105,10 @@ async def execute_tool(
     logger.info("tool_dispatch_started tool_name=%s arguments=%s", name, json_preview(arguments))
     if name == "get_current_readings":
         tool_result = await execute_current_readings_tool(jwt=jwt, renile_client=renile_client)
+        logger.info("tool_dispatch_completed tool_name=%s", name)
+        return tool_result
+    if name == "get_devices_ids":
+        tool_result = await execute_devices_ids_tool(jwt=jwt, renile_client=renile_client)
         logger.info("tool_dispatch_completed tool_name=%s", name)
         return tool_result
     if name == "get_historical_readings":

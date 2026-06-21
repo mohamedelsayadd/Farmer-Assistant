@@ -25,6 +25,15 @@ class ReNileClient:
         logger.info("renile_current_readings_completed devices=%s", len(response))
         return response
 
+    async def get_devices_ids(self, jwt: str) -> list[dict[str, Any]]:
+        logger.info("renile_devices_ids_started path=%s", self._current_path)
+        response = await self._get(self._current_path, jwt, {})
+        if not isinstance(response, list):
+            logger.error("renile_devices_ids_invalid_shape response_type=%s", type(response).__name__)
+            raise ValueError("Unexpected devices IDs response shape")
+        logger.info("renile_devices_ids_completed devices=%s", len(response))
+        return response
+
     async def get_historical_readings(self, jwt: str, params: dict[str, Any]) -> dict[str, Any]:
         return await self._get(self._historical_path, jwt, params)
 
