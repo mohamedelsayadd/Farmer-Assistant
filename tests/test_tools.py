@@ -7,6 +7,7 @@ from agent.tools import (
     execute_current_readings_tool,
     execute_devices_ids_tool,
     execute_last_duration_summary_tool,
+    execute_specific_time_readings_tool,
 )
 
 
@@ -44,6 +45,15 @@ def test_last_duration_summary_tool_schema_is_safe() -> None:
     assert "jwt" not in str(summary_tool).lower()
 
 
+def test_specific_time_readings_tool_schema_is_safe() -> None:
+    readings_tool = next(tool for tool in OPENAI_TOOLS if tool["function"]["name"] == "get_specific_time_readings")
+    parameters = readings_tool["function"]["parameters"]
+
+    assert parameters["required"] == ["device_id", "start_time"]
+    assert "data_type" not in parameters["properties"]
+    assert "jwt" not in str(readings_tool).lower()
+
+
 class FakeReNileClient:
     async def get_current_readings(self, jwt: str) -> list[dict]:
         assert jwt == "runtime-jwt"
@@ -74,6 +84,17 @@ class FakeReNileClient:
             "CO2": {
                 "labels": ["2026-06-01T00:00:00.000Z"],
                 "data": [{"$numberDecimal": "505.94"}],
+            }
+        }
+
+    async def get_specific_time_readings(self, jwt: str, device_id: str, start_time: str) -> dict:
+        assert jwt == "runtime-jwt"
+        assert device_id == "device-1"
+        assert start_time == "2026-06-01 00:00"
+        return {
+            "CO2": {
+                "labels": ["2026-06-01T04:00:00.000Z"],
+                "data": [{"$numberDecimal": "532.55"}],
             }
         }
 
@@ -130,4 +151,21 @@ async def test_last_duration_summary_tool_returns_processed_api_response() -> No
         "start_time": "2026-06-01 00:00",
         "data_type": "month",
         "daily_rows": [{"date": "2026-06-01", "CO2": 505.94}],
+    }
+
+
+@pytest.mark.asyncio
+async def test_specific_time_readings_tool_returns_processed_api_response() -> None:
+    readings = await execute_specific_time_readings_tool(
+        jwt="runtime-jwt",
+        renile_client=FakeReNileClient(),  # type: ignore[arg-type]
+        device_id="device-1",
+        start_time="2026-06-01 00:00",
+    )
+
+    assert readings == {
+        "device_id": "device-1",
+        "start_time": "2026-06-01 00:00",
+        "data_type": "day",
+        "hourly_rows": [{"timestamp": "2026-06-01T04:00:00.000Z", "CO2": 532.55}],
     }

@@ -17,7 +17,7 @@ from providers.renile_client import ReNileClient
 
 logger = logging.getLogger(__name__)
 CURRENT_TOOL_NAMES = {"get_current_readings"}
-HISTORICAL_TOOL_NAMES = {"get_devices_ids", "get_last_duration_summary"}
+HISTORICAL_TOOL_NAMES = {"get_devices_ids", "get_last_duration_summary", "get_specific_time_readings"}
 
 
 class AgentState(TypedDict):
@@ -227,7 +227,7 @@ class FarmerAssistantAgent:
         return (
             f"{SYSTEM_PROMPT}\n\n"
             f"تاريخ النهاردة: {current_date}. استخدم التاريخ ده عشان تفهم عبارات زي امبارح، "
-            "آخر أسبوع، آخر 3 أسابيع، آخر فترة، ومن شهر 1 لشهر 5."
+            "آخر أسبوع، آخر 3 أسابيع، آخر فترة، من يومين، يوم الأحد اللي فات، ومن شهر 1 لشهر 5."
         )
 
     @staticmethod

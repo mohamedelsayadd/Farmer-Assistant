@@ -1,4 +1,8 @@
-from services.historical_summary_processor import parse_decimal_value, process_daily_sensor_response
+from services.historical_summary_processor import (
+    parse_decimal_value,
+    process_daily_sensor_response,
+    process_hourly_sensor_response,
+)
 
 
 def test_parse_decimal_value() -> None:
@@ -27,4 +31,24 @@ def test_process_daily_sensor_response_converts_sensor_payload_to_daily_rows() -
     assert daily_rows == [
         {"date": "2026-06-01", "CO2": 505.94, "ambient_temp": 23.1},
         {"date": "2026-06-02", "CO2": 499.17, "ambient_temp": 24.48},
+    ]
+
+
+def test_process_hourly_sensor_response_converts_sensor_payload_to_hourly_rows() -> None:
+    response = {
+        "CO2": {
+            "labels": ["2026-06-01T04:00:00.000Z", "2026-06-01T05:00:00.000Z"],
+            "data": [{"$numberDecimal": "532.55"}, {"$numberDecimal": "479.48"}],
+        },
+        "ambient_temp": {
+            "labels": ["2026-06-01T04:00:00.000Z", "2026-06-01T05:00:00.000Z"],
+            "data": [{"$numberDecimal": "22.58"}, {"$numberDecimal": "23.99"}],
+        },
+    }
+
+    hourly_rows = process_hourly_sensor_response(response)
+
+    assert hourly_rows == [
+        {"timestamp": "2026-06-01T04:00:00.000Z", "CO2": 532.55, "ambient_temp": 22.58},
+        {"timestamp": "2026-06-01T05:00:00.000Z", "CO2": 479.48, "ambient_temp": 23.99},
     ]

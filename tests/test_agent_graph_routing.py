@@ -21,6 +21,12 @@ def test_tool_path_routes_last_duration_summary_to_historical_path() -> None:
     assert FarmerAssistantAgent._tool_path(state) == "historical_tools"
 
 
+def test_tool_path_routes_specific_time_readings_to_historical_path() -> None:
+    state = {"assistant_message": _assistant_message("get_specific_time_readings")}
+
+    assert FarmerAssistantAgent._tool_path(state) == "historical_tools"
+
+
 def test_tool_path_routes_no_tool_calls_to_final() -> None:
     state = {"assistant_message": SimpleNamespace(tool_calls=[])}
 

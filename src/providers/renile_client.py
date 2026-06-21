@@ -55,6 +55,24 @@ class ReNileClient:
         logger.info("renile_last_duration_summary_completed sensors=%s", len(response))
         return response
 
+    async def get_specific_time_readings(self, jwt: str, device_id: str, start_time: str) -> dict[str, Any]:
+        logger.info(
+            "renile_specific_time_readings_started path=%s device_id=%s start_time=%s data_type=day",
+            self._historical_path,
+            device_id,
+            start_time,
+        )
+        response = await self._get(
+            self._historical_path,
+            jwt,
+            {"data_type": "day", "start_time": start_time, "device_id": device_id},
+        )
+        if not isinstance(response, dict):
+            logger.error("renile_specific_time_readings_invalid_shape response_type=%s", type(response).__name__)
+            raise ValueError("Unexpected specific time readings response shape")
+        logger.info("renile_specific_time_readings_completed sensors=%s", len(response))
+        return response
+
     async def _get(self, path: str, jwt: str, params: dict[str, Any]) -> Any:
         started_at = perf_counter()
         headers = {"Authorization": f"JWT {jwt}"}

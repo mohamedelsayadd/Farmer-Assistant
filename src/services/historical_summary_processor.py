@@ -20,6 +20,20 @@ def process_daily_sensor_response(response: dict[str, Any]) -> list[dict[str, An
     return rows
 
 
+def process_hourly_sensor_response(response: dict[str, Any]) -> list[dict[str, Any]]:
+    logger.info("historical_hourly_processing_started sensors=%s", len(response))
+    hourly_rows: dict[str, dict[str, Any]] = {}
+    for sensor_name, sensor_payload in response.items():
+        labels = sensor_payload.get("labels", [])
+        sensor_values = sensor_payload.get("data", [])
+        for timestamp, sensor_value in zip(labels, sensor_values):
+            hourly_rows.setdefault(timestamp, {"timestamp": timestamp})[sensor_name] = parse_decimal_value(sensor_value)
+
+    rows = list(hourly_rows.values())
+    logger.info("historical_hourly_processing_completed rows=%s", len(rows))
+    return rows
+
+
 def parse_decimal_value(value: Any) -> float | int | None:
     if value is None:
         return None
