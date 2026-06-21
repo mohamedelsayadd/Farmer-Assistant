@@ -5,6 +5,7 @@ from core.logging import json_preview
 from providers.renile_client import ReNileClient
 from services.current_readings_processor import process_current_readings
 from services.devices_ids_processor import process_devices_ids
+from services.historical_summary_processor import process_daily_sensor_response
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +37,28 @@ OPENAI_TOOLS: list[dict[str, Any]] = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_last_duration_summary",
+            "description": "Get historical daily summary readings for a selected device and period. Use only after the user named a device and device_id is available from get_devices_ids context.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "device_id": {
+                        "type": "string",
+                        "description": "Device ID resolved from get_devices_ids context.",
+                    },
+                    "start_time": {
+                        "type": "string",
+                        "description": "Start time in format YYYY-MM-DD HH:mm, resolved using today's date from the system prompt.",
+                    },
+                },
+                "required": ["device_id", "start_time"],
+                "additionalProperties": False,
+            },
+        },
+    },
 ]
 
 
@@ -63,6 +86,25 @@ async def execute_devices_ids_tool(jwt: str, renile_client: ReNileClient) -> dic
         json_preview(devices_ids),
     )
     return devices_ids
+
+
+async def execute_last_duration_summary_tool(
+    jwt: str,
+    renile_client: ReNileClient,
+    device_id: str,
+    start_time: str,
+) -> dict[str, Any]:
+    logger.info("tool_last_duration_summary_started device_id=%s start_time=%s data_type=month", device_id, start_time)
+    raw_summary = await renile_client.get_last_duration_summary(jwt=jwt, device_id=device_id, start_time=start_time)
+    daily_rows = process_daily_sensor_response(raw_summary)
+    summary = {"device_id": device_id, "start_time": start_time, "data_type": "month", "daily_rows": daily_rows}
+    logger.info(
+        "tool_last_duration_summary_completed sensors=%s rows=%s result_preview=%s",
+        len(raw_summary),
+        len(daily_rows),
+        json_preview(summary),
+    )
+    return summary
 
 
 async def execute_historical_readings_tool(
@@ -109,6 +151,15 @@ async def execute_tool(
         return tool_result
     if name == "get_devices_ids":
         tool_result = await execute_devices_ids_tool(jwt=jwt, renile_client=renile_client)
+        logger.info("tool_dispatch_completed tool_name=%s", name)
+        return tool_result
+    if name == "get_last_duration_summary":
+        tool_result = await execute_last_duration_summary_tool(
+            jwt=jwt,
+            renile_client=renile_client,
+            device_id=arguments["device_id"],
+            start_time=arguments["start_time"],
+        )
         logger.info("tool_dispatch_completed tool_name=%s", name)
         return tool_result
     if name == "get_historical_readings":

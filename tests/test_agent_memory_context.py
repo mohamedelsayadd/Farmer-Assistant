@@ -21,3 +21,9 @@ def test_build_messages_injects_tool_context_as_system_message() -> None:
     assert "Cached tool result from get_current_readings" in cached_context["content"]
     assert '{"devices": []}' in cached_context["content"]
     assert messages[-1] == {"role": "user", "content": "والرطوبة؟"}
+
+
+def test_build_messages_injects_current_date() -> None:
+    messages = FarmerAssistantAgent._build_messages(history=[], user_message="آخر أسبوع؟")
+
+    assert "تاريخ النهاردة:" in messages[0]["content"]

@@ -1,6 +1,7 @@
 import json
 import logging
 from dataclasses import dataclass
+from datetime import date
 from time import perf_counter
 from typing import Any, NotRequired, TypedDict
 
@@ -16,7 +17,7 @@ from providers.renile_client import ReNileClient
 
 logger = logging.getLogger(__name__)
 CURRENT_TOOL_NAMES = {"get_current_readings"}
-HISTORICAL_TOOL_NAMES = {"get_devices_ids"}
+HISTORICAL_TOOL_NAMES = {"get_devices_ids", "get_last_duration_summary"}
 
 
 class AgentState(TypedDict):
@@ -215,10 +216,19 @@ class FarmerAssistantAgent:
 
     @staticmethod
     def _build_messages(history: list[MemoryMessage], user_message: str) -> list[dict[str, Any]]:
-        messages: list[dict[str, Any]] = [{"role": "system", "content": SYSTEM_PROMPT}]
+        messages: list[dict[str, Any]] = [{"role": "system", "content": FarmerAssistantAgent._system_prompt()}]
         messages.extend(FarmerAssistantAgent._history_message(message) for message in history)
         messages.append({"role": "user", "content": user_message})
         return messages
+
+    @staticmethod
+    def _system_prompt() -> str:
+        current_date = date.today().isoformat()
+        return (
+            f"{SYSTEM_PROMPT}\n\n"
+            f"تاريخ النهاردة: {current_date}. استخدم التاريخ ده عشان تفهم عبارات زي امبارح، "
+            "آخر أسبوع، آخر 3 أسابيع، آخر فترة، ومن شهر 1 لشهر 5."
+        )
 
     @staticmethod
     def _history_message(message: MemoryMessage) -> dict[str, Any]:

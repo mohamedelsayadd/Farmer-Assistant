@@ -2,7 +2,12 @@ import logging
 
 import pytest
 
-from agent.tools import OPENAI_TOOLS, execute_current_readings_tool, execute_devices_ids_tool
+from agent.tools import (
+    OPENAI_TOOLS,
+    execute_current_readings_tool,
+    execute_devices_ids_tool,
+    execute_last_duration_summary_tool,
+)
 
 
 def test_tool_schemas_do_not_expose_jwt() -> None:
@@ -30,6 +35,15 @@ def test_historical_readings_tool_is_not_exposed_to_agent() -> None:
     assert "get_historical_readings" not in tool_names
 
 
+def test_last_duration_summary_tool_schema_is_safe() -> None:
+    summary_tool = next(tool for tool in OPENAI_TOOLS if tool["function"]["name"] == "get_last_duration_summary")
+    parameters = summary_tool["function"]["parameters"]
+
+    assert parameters["required"] == ["device_id", "start_time"]
+    assert "data_type" not in parameters["properties"]
+    assert "jwt" not in str(summary_tool).lower()
+
+
 class FakeReNileClient:
     async def get_current_readings(self, jwt: str) -> list[dict]:
         assert jwt == "runtime-jwt"
@@ -51,6 +65,17 @@ class FakeReNileClient:
                 "_project": {"type": "Farm 1"},
             }
         ]
+
+    async def get_last_duration_summary(self, jwt: str, device_id: str, start_time: str) -> dict:
+        assert jwt == "runtime-jwt"
+        assert device_id == "device-1"
+        assert start_time == "2026-06-01 00:00"
+        return {
+            "CO2": {
+                "labels": ["2026-06-01T00:00:00.000Z"],
+                "data": [{"$numberDecimal": "505.94"}],
+            }
+        }
 
 
 @pytest.mark.asyncio
@@ -88,4 +113,21 @@ async def test_devices_ids_tool_returns_processed_api_response() -> None:
     assert devices_ids == {
         "project_name": "Farm 1",
         "devices": [{"device_name": "Device 1", "device_id": "device-1"}],
+    }
+
+
+@pytest.mark.asyncio
+async def test_last_duration_summary_tool_returns_processed_api_response() -> None:
+    summary = await execute_last_duration_summary_tool(
+        jwt="runtime-jwt",
+        renile_client=FakeReNileClient(),  # type: ignore[arg-type]
+        device_id="device-1",
+        start_time="2026-06-01 00:00",
+    )
+
+    assert summary == {
+        "device_id": "device-1",
+        "start_time": "2026-06-01 00:00",
+        "data_type": "month",
+        "daily_rows": [{"date": "2026-06-01", "CO2": 505.94}],
     }

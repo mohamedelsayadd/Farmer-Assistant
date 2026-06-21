@@ -37,6 +37,24 @@ class ReNileClient:
     async def get_historical_readings(self, jwt: str, params: dict[str, Any]) -> dict[str, Any]:
         return await self._get(self._historical_path, jwt, params)
 
+    async def get_last_duration_summary(self, jwt: str, device_id: str, start_time: str) -> dict[str, Any]:
+        logger.info(
+            "renile_last_duration_summary_started path=%s device_id=%s start_time=%s data_type=month",
+            self._historical_path,
+            device_id,
+            start_time,
+        )
+        response = await self._get(
+            self._historical_path,
+            jwt,
+            {"data_type": "month", "start_time": start_time, "device_id": device_id},
+        )
+        if not isinstance(response, dict):
+            logger.error("renile_last_duration_summary_invalid_shape response_type=%s", type(response).__name__)
+            raise ValueError("Unexpected last duration summary response shape")
+        logger.info("renile_last_duration_summary_completed sensors=%s", len(response))
+        return response
+
     async def _get(self, path: str, jwt: str, params: dict[str, Any]) -> Any:
         started_at = perf_counter()
         headers = {"Authorization": f"JWT {jwt}"}
