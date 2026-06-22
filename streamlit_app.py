@@ -5,7 +5,7 @@ import httpx
 import streamlit as st
 
 
-DEFAULT_API_BASE_URL = os.getenv("CHAT_API_BASE_URL", "http://localhost:8002")
+DEFAULT_API_BASE_URL = os.getenv("CHAT_API_BASE_URL", "http://localhost:8001")
 
 
 def initialize_session() -> None:
