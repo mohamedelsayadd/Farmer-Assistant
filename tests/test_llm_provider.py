@@ -9,10 +9,11 @@ from providers.llm import LLMProvider
 class FakeCompletions:
     def __init__(self) -> None:
         self.kwargs = None
+        self.response_content = "تمام"
 
     async def create(self, **kwargs):
         self.kwargs = kwargs
-        message = SimpleNamespace(content="تمام", tool_calls=[])
+        message = SimpleNamespace(content=self.response_content, tool_calls=[])
         choice = SimpleNamespace(message=message, finish_reason="stop")
         return SimpleNamespace(choices=[choice])
 
@@ -79,3 +80,45 @@ async def test_llm_provider_keeps_tool_choice_when_tools_are_passed(monkeypatch)
     request_kwargs = FakeAsyncOpenAI.last_instance.completions.kwargs
     assert request_kwargs["tools"] == tools
     assert request_kwargs["tool_choice"] == "auto"
+
+
+@pytest.mark.asyncio
+async def test_llm_provider_strips_qwen_thinking_content(monkeypatch) -> None:
+    monkeypatch.setattr(llm_module, "AsyncOpenAI", FakeAsyncOpenAI)
+    settings = SimpleNamespace(
+        llm_api_key="EMPTY",
+        llm_base_url="http://localhost:5000/v1",
+        llm_model="Qwen/Qwen3.6-27B-int4-AutoRound",
+        llm_enable_thinking=True,
+        llm_temperature=0.2,
+        llm_max_tokens=1024,
+        llm_top_p=0.8,
+        llm_top_k=20,
+    )
+    provider = LLMProvider(settings)
+    FakeAsyncOpenAI.last_instance.completions.response_content = "<think>reasoning</think>الإجابة النهائية"
+
+    response = await provider.chat([{"role": "user", "content": "اشرح"}])
+
+    assert response.content == "الإجابة النهائية"
+
+
+@pytest.mark.asyncio
+async def test_llm_provider_preserves_content_without_thinking_marker(monkeypatch) -> None:
+    monkeypatch.setattr(llm_module, "AsyncOpenAI", FakeAsyncOpenAI)
+    settings = SimpleNamespace(
+        llm_api_key="EMPTY",
+        llm_base_url="http://localhost:5000/v1",
+        llm_model="Qwen/Qwen3.6-27B-int4-AutoRound",
+        llm_enable_thinking=False,
+        llm_temperature=0.2,
+        llm_max_tokens=1024,
+        llm_top_p=0.8,
+        llm_top_k=20,
+    )
+    provider = LLMProvider(settings)
+    FakeAsyncOpenAI.last_instance.completions.response_content = "الإجابة النهائية"
+
+    response = await provider.chat([{"role": "user", "content": "اشرح"}])
+
+    assert response.content == "الإجابة النهائية"

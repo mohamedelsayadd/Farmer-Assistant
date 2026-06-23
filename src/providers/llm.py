@@ -50,6 +50,7 @@ class LLMProvider:
 
         response = await self._client.chat.completions.create(**kwargs)
         assistant_message = response.choices[0].message
+        assistant_message.content = self._strip_thinking(assistant_message.content)
         elapsed_ms = int((perf_counter() - started_at) * 1000)
         tool_calls = getattr(assistant_message, "tool_calls", None) or []
         logger.info(
@@ -61,3 +62,9 @@ class LLMProvider:
             len(assistant_message.content or ""),
         )
         return assistant_message
+
+    @staticmethod
+    def _strip_thinking(content: str | None) -> str | None:
+        if not content or "</think>" not in content:
+            return content
+        return content.rsplit("</think>", maxsplit=1)[-1].strip()
