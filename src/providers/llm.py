@@ -16,6 +16,11 @@ class LLMProvider:
             base_url=settings.llm_base_url,
         )
         self._model = settings.llm_model
+        self._enable_thinking = settings.llm_enable_thinking
+        self._temperature = settings.llm_temperature
+        self._max_tokens = settings.llm_max_tokens
+        self._top_p = settings.llm_top_p
+        self._top_k = settings.llm_top_k
 
     async def chat(self, messages: list[dict[str, Any]], tools: list[dict[str, Any]] | None = None) -> Any:
         started_at = perf_counter()
@@ -29,6 +34,15 @@ class LLMProvider:
         kwargs: dict[str, Any] = {
             "model": self._model,
             "messages": messages,
+            "temperature": self._temperature,
+            "max_tokens": self._max_tokens,
+            "top_p": self._top_p,
+            "extra_body": {
+                "top_k": self._top_k,
+                "chat_template_kwargs": {
+                    "enable_thinking": self._enable_thinking,
+                },
+            },
         }
         if tools:
             kwargs["tools"] = tools

@@ -18,6 +18,11 @@ class Settings(BaseSettings):
     llm_api_key: str = Field(alias="LLM_API_KEY")
     llm_base_url: str = Field(alias="LLM_BASE_URL")
     llm_model: str = Field(alias="LLM_MODEL")
+    llm_enable_thinking: bool = Field(default=False, alias="LLM_ENABLE_THINKING")
+    llm_temperature: float = Field(default=0.2, alias="LLM_TEMPERATURE", ge=0, le=2)
+    llm_max_tokens: int = Field(default=1024, alias="LLM_MAX_TOKENS", gt=0)
+    llm_top_p: float = Field(default=0.8, alias="LLM_TOP_P", gt=0, le=1)
+    llm_top_k: int = Field(default=20, alias="LLM_TOP_K", gt=0)
 
     redis_url: str = Field(alias="REDIS_URL")
     redis_memory_ttl_seconds: int = Field(alias="REDIS_MEMORY_TTL_SECONDS", gt=0)
