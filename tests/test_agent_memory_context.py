@@ -1,7 +1,7 @@
 from agent.graph import FarmerAssistantAgent
 
 
-def test_build_messages_injects_tool_context_as_system_message() -> None:
+def test_build_messages_merges_tool_context_into_first_system_message() -> None:
     messages = FarmerAssistantAgent._build_messages(
         history=[
             {"role": "user", "content": "درجة الحرارة كام؟"},
@@ -15,11 +15,13 @@ def test_build_messages_injects_tool_context_as_system_message() -> None:
         user_message="والرطوبة؟",
     )
 
-    cached_context = messages[2]
+    system_messages = [message for message in messages if message["role"] == "system"]
 
-    assert cached_context["role"] == "system"
-    assert "Cached tool result from get_current_readings" in cached_context["content"]
-    assert '{"devices": []}' in cached_context["content"]
+    assert system_messages == [messages[0]]
+    assert "Cached tool result from get_current_readings" in messages[0]["content"]
+    assert '{"devices": []}' in messages[0]["content"]
+    assert messages[1] == {"role": "user", "content": "درجة الحرارة كام؟"}
+    assert messages[2] == {"role": "assistant", "content": "درجة الحرارة ٢٢."}
     assert messages[-1] == {"role": "user", "content": "والرطوبة؟"}
 
 

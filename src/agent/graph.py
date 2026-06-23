@@ -216,31 +216,44 @@ class FarmerAssistantAgent:
 
     @staticmethod
     def _build_messages(history: list[MemoryMessage], user_message: str) -> list[dict[str, Any]]:
-        messages: list[dict[str, Any]] = [{"role": "system", "content": FarmerAssistantAgent._system_prompt()}]
-        messages.extend(FarmerAssistantAgent._history_message(message) for message in history)
+        messages: list[dict[str, Any]] = [
+            {"role": "system", "content": FarmerAssistantAgent._system_prompt(history)}
+        ]
+        messages.extend(FarmerAssistantAgent._history_message(message) for message in history if message["role"] != "tool_context")
         messages.append({"role": "user", "content": user_message})
         return messages
 
     @staticmethod
-    def _system_prompt() -> str:
+    def _system_prompt(history: list[MemoryMessage] | None = None) -> str:
         current_date = date.today().isoformat()
-        return (
+        prompt = (
             f"{SYSTEM_PROMPT}\n\n"
             f"تاريخ النهاردة: {current_date}. استخدم التاريخ ده عشان تفهم عبارات زي امبارح، "
             "آخر أسبوع، آخر 3 أسابيع، آخر فترة، من يومين، يوم الأحد اللي فات، ومن شهر 1 لشهر 5."
         )
 
+        cached_contexts = FarmerAssistantAgent._cached_tool_contexts(history or [])
+        if cached_contexts:
+            prompt = f"{prompt}\n\n{cached_contexts}"
+        return prompt
+
     @staticmethod
-    def _history_message(message: MemoryMessage) -> dict[str, Any]:
-        if message["role"] == "tool_context":
+    def _cached_tool_contexts(history: list[MemoryMessage]) -> str:
+        contexts: list[str] = []
+        for message in history:
+            if message["role"] != "tool_context":
+                continue
             tool_name = message.get("tool_name", "unknown_tool")
             logger.info("agent_context_included tool_name=%s content_chars=%s", tool_name, len(message["content"]))
-            return {
-                "role": "system",
-                "content": (
-                    f"Cached tool result from {tool_name}. Use it for follow-up questions if relevant. "
-                    "Do not call the API again unless the user clearly asks for fresh or updated readings.\n\n"
-                    f"{message['content']}"
-                ),
-            }
+            contexts.append(
+                f"Cached tool result from {tool_name}. Use it for follow-up questions if relevant. "
+                "Do not call the API again unless the user clearly asks for fresh or updated readings.\n\n"
+                f"{message['content']}"
+            )
+        if not contexts:
+            return ""
+        return "\n\n".join(contexts)
+
+    @staticmethod
+    def _history_message(message: MemoryMessage) -> dict[str, Any]:
         return {"role": message["role"], "content": message["content"]}
