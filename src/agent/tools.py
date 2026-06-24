@@ -41,13 +41,13 @@ OPENAI_TOOLS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "get_last_duration_summary",
-            "description": "Get historical daily summary readings for a selected device and period. Use only after the user named a device and device_id is available from get_devices_ids context.",
+            "description": "Get historical daily summary readings for a selected device and period. Use only after get_devices_ids returned the real device_id. NEVER pass a device name as device_id.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "device_id": {
                         "type": "string",
-                        "description": "Device ID resolved from get_devices_ids context.",
+                        "description": "Real device_id copied from get_devices_ids context. This must be an ID, not the device name.",
                     },
                     "start_time": {
                         "type": "string",
@@ -63,13 +63,13 @@ OPENAI_TOOLS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "get_specific_time_readings",
-            "description": "Get historical hourly readings for a selected device on a specific previous day or time. Use only after device_id is available from get_devices_ids context.",
+            "description": "Get historical hourly readings for a selected device on a specific previous day or time. Use only after get_devices_ids returned the real device_id. NEVER pass a device name as device_id.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "device_id": {
                         "type": "string",
-                        "description": "Device ID resolved from get_devices_ids context.",
+                        "description": "Real device_id copied from get_devices_ids context. This must be an ID, not the device name.",
                     },
                     "start_time": {
                         "type": "string",
