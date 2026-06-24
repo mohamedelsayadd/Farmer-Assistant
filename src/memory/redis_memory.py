@@ -1,18 +1,17 @@
 import json
 import logging
-from typing import Literal, NotRequired, TypedDict
+from typing import Literal, TypedDict
 
 from redis.asyncio import Redis
 
 
-Role = Literal["user", "assistant", "tool_context"]
+Role = Literal["user", "assistant"]
 logger = logging.getLogger(__name__)
 
 
 class MemoryMessage(TypedDict):
     role: Role
     content: str
-    tool_name: NotRequired[str]
 
 
 class RedisMemory:
@@ -29,28 +28,12 @@ class RedisMemory:
             value = raw_message.decode("utf-8") if isinstance(raw_message, bytes) else raw_message
             message = json.loads(value)
             if self._is_memory_message(message):
-                loaded_message: MemoryMessage = {"role": message["role"], "content": message["content"]}
-                if message.get("role") == "tool_context" and isinstance(message.get("tool_name"), str):
-                    loaded_message["tool_name"] = message["tool_name"]
-                messages.append(loaded_message)
+                messages.append({"role": message["role"], "content": message["content"]})
         logger.debug("memory_load_completed conversation_id=%s messages=%s", conversation_id, len(messages))
         return messages
 
     async def append(self, conversation_id: str, role: Role, content: str) -> None:
         await self._append_payload(conversation_id, {"role": role, "content": content})
-
-    async def append_tool_context(self, conversation_id: str, tool_name: str, content: str) -> None:
-        logger.info(
-            "memory_tool_context_append_started conversation_id=%s tool_name=%s content_chars=%s",
-            conversation_id,
-            tool_name,
-            len(content),
-        )
-        await self._append_payload(
-            conversation_id,
-            {"role": "tool_context", "tool_name": tool_name, "content": content},
-        )
-        logger.info("memory_tool_context_append_completed conversation_id=%s tool_name=%s", conversation_id, tool_name)
 
     async def _append_payload(self, conversation_id: str, message: dict[str, str]) -> None:
         key = self._key(conversation_id)
@@ -76,7 +59,7 @@ class RedisMemory:
 
     @staticmethod
     def _is_memory_message(message: dict[str, object]) -> bool:
-        return message.get("role") in {"user", "assistant", "tool_context"} and isinstance(message.get("content"), str)
+        return message.get("role") in {"user", "assistant"} and isinstance(message.get("content"), str)
 
     @staticmethod
     def _key(conversation_id: str) -> str:

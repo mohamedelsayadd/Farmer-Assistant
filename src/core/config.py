@@ -27,6 +27,8 @@ class Settings(BaseSettings):
     redis_url: str = Field(alias="REDIS_URL")
     redis_memory_ttl_seconds: int = Field(alias="REDIS_MEMORY_TTL_SECONDS", gt=0)
     redis_memory_max_messages: int = Field(alias="REDIS_MEMORY_MAX_MESSAGES", gt=0)
+    redis_tool_cache_url: str = Field(default="redis://localhost:6379/1", alias="REDIS_TOOL_CACHE_URL")
+    redis_tool_cache_ttl_seconds: int = Field(default=3600, alias="REDIS_TOOL_CACHE_TTL_SECONDS", gt=0)
 
     renile_api_base_url: str = Field(alias="RENILE_API_BASE_URL")
     renile_current_readings_path: str = Field(alias="RENILE_CURRENT_READINGS_PATH")

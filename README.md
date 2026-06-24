@@ -7,7 +7,7 @@ The assistant is prompted to answer in simple Egyptian Arabic and can help with:
 - Current farm/device readings.
 - Historical daily or hourly readings for selected devices.
 - General agricultural questions that do not require private farm data.
-- Follow-up questions using recent Redis-backed conversation/tool context.
+- Follow-up questions using recent Redis-backed conversation memory and backend tool cache.
 
 ## Tech Stack
 
@@ -71,6 +71,7 @@ LLM_API_KEY=EMPTY
 LLM_BASE_URL=http://localhost:5000/v1
 LLM_MODEL=Qwen/Qwen2.5-1.5B-Instruct
 REDIS_URL=redis://localhost:6379/0
+REDIS_TOOL_CACHE_URL=redis://localhost:6379/1
 RENILE_API_BASE_URL=https://renile-iot.com
 CHAT_API_BASE_URL=http://localhost:8000
 ```
@@ -165,12 +166,14 @@ Historical tools require a real `device_id` resolved from `get_devices_ids`. Dev
 
 ## Memory Behavior
 
-Redis stores recent conversation messages and internal tool context under a conversation key. Defaults from `.env.example`:
+Redis DB 0 stores recent conversation messages under `conversation:{conversation_id}`. Defaults from `.env.example`:
 
 - TTL: `3600` seconds
 - Max messages: `12`
 
-Tool context is injected into later LLM calls as system context so follow-up questions can use recent data without exposing backend internals to the user.
+Redis DB 1 stores processed tool results under keys shaped like `tool_cache:{conversation_id}:{tool_name}:{arguments_hash}`.
+
+Tool results are not injected into the LLM prompt memory. When the LLM requests a tool, the backend checks the tool cache first and only calls ReNile on cache miss.
 
 ## Development Commands
 

@@ -9,6 +9,7 @@ from api.v1.endpoints.chat import router as chat_router
 from core.config import get_settings
 from core.logging import configure_logging
 from memory.redis_memory import RedisMemory
+from memory.tool_cache import ToolCache
 from providers.llm import LLMProvider
 from providers.renile_client import ReNileClient
 from services.chat_service import ChatService
@@ -20,7 +21,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     configure_logging(settings.log_level)
 
     redis = Redis.from_url(settings.redis_url, decode_responses=False)
+    tool_cache_redis = Redis.from_url(settings.redis_tool_cache_url, decode_responses=False)
     await redis.ping()
+    await tool_cache_redis.ping()
 
     memory = RedisMemory(
         redis=redis,
@@ -30,12 +33,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     llm = LLMProvider(settings)
     renile_client = ReNileClient(settings)
     app.state.redis = redis
-    app.state.chat_service = ChatService(memory=memory, agent=FarmerAssistantAgent(llm, renile_client))
+    app.state.tool_cache_redis = tool_cache_redis
+    tool_cache = ToolCache(redis=tool_cache_redis, ttl_seconds=settings.redis_tool_cache_ttl_seconds)
+    app.state.chat_service = ChatService(memory=memory, agent=FarmerAssistantAgent(llm, renile_client, tool_cache))
 
     try:
         yield
     finally:
         await redis.aclose()
+        await tool_cache_redis.aclose()
 
 
 app = FastAPI(title="ReNile Farmer Assistant", lifespan=lifespan)
