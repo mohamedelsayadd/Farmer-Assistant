@@ -16,12 +16,9 @@ class FakeMemory:
     async def append(self, conversation_id: str, role: str, content: str) -> None:
         self.events.append((role, conversation_id, content))
 
-    async def append_tool_context(self, conversation_id: str, tool_name: str, content: str) -> None:
-        self.events.append((f"tool_context:{tool_name}", conversation_id, content))
-
-
 class FakeAgent:
-    async def run(self, jwt: str, user_message: str, history: list[dict]) -> AgentResult:
+    async def run(self, conversation_id: str, jwt: str, user_message: str, history: list[dict]) -> AgentResult:
+        assert conversation_id == "conversation-1"
         assert jwt == "runtime-jwt"
         assert user_message == "درجة الحرارة كام؟"
         assert history == []
@@ -30,7 +27,8 @@ class FakeAgent:
             tool_contexts=[ToolContext(tool_name="get_current_readings", content='{"devices": []}')],
         )
 
-    async def run_stream(self, jwt: str, user_message: str, history: list[dict]) -> AgentStreamResult:
+    async def run_stream(self, conversation_id: str, jwt: str, user_message: str, history: list[dict]) -> AgentStreamResult:
+        assert conversation_id == "conversation-1"
         assert jwt == "runtime-jwt"
         assert user_message == "درجة الحرارة كام؟"
         assert history == []
@@ -46,7 +44,7 @@ class FakeAgent:
 
 
 @pytest.mark.asyncio
-async def test_chat_service_saves_tool_context_between_user_and_assistant() -> None:
+async def test_chat_service_saves_only_user_and_assistant_messages() -> None:
     memory = FakeMemory()
     service = ChatService(memory=memory, agent=FakeAgent())  # type: ignore[arg-type]
 
@@ -61,7 +59,6 @@ async def test_chat_service_saves_tool_context_between_user_and_assistant() -> N
     assert response.message == "درجة الحرارة ٢٢."
     assert memory.events == [
         ("user", "conversation-1", "درجة الحرارة كام؟"),
-        ("tool_context:get_current_readings", "conversation-1", '{"devices": []}'),
         ("assistant", "conversation-1", "درجة الحرارة ٢٢."),
     ]
 
@@ -85,6 +82,5 @@ async def test_chat_service_streams_and_saves_full_response() -> None:
     assert chunks == ["درجة ", "الحرارة ", "٢٢."]
     assert memory.events == [
         ("user", "conversation-1", "درجة الحرارة كام؟"),
-        ("tool_context:get_current_readings", "conversation-1", '{"devices": []}'),
         ("assistant", "conversation-1", "درجة الحرارة ٢٢."),
     ]

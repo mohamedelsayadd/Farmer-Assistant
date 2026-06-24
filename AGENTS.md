@@ -10,14 +10,14 @@
 
 ## Runtime Setup
 - Settings load from root `.env` via `pydantic-settings`; keep real secrets only in `.env`, which is gitignored.
-- `.env.example` is the source of expected env names. Important values: OpenAI-compatible LLM settings, Redis URL, ReNile base/path values, and `CHAT_API_BASE_URL` for Streamlit.
+- `.env.example` is the source of expected env names. Important values: OpenAI-compatible LLM settings, Redis URLs, ReNile base/path values, and `CHAT_API_BASE_URL` for Streamlit.
 - Redis is required at app startup because `src/main.py` pings Redis in lifespan.
 - Memory TTL is 1 hour and max memory messages is 12 unless `.env` changes it.
 
 ## Entrypoints
 - FastAPI app: `src/main.py` exposes `/health` and includes `/api/v1/chat`.
 - Chat request schema is `jwt`, `conversation_id`, `message`; response is only `conversation_id` and `message`.
-- Manual UI: `streamlit_app.py` calls `POST /api/v1/chat` and keeps only UI-local display history.
+- Manual UI: `streamlit_app.py` calls `POST /api/v1/chat/stream` and keeps only UI-local display history.
 
 ## Agent And Tools
 - Agent graph lives in `src/agent/graph.py`; tool schemas and execution live in `src/agent/tools.py`.
@@ -29,9 +29,9 @@
 - `get_current_readings` and `get_devices_ids` both use `/api/users/devices/` but different processors.
 
 ## Memory Behavior
-- Redis stores `user`, `assistant`, and internal `tool_context` entries in one list keyed by `conversation:{conversation_id}`.
-- Tool results are saved as `tool_context` after the user message and before the assistant response.
-- Cached `tool_context` is injected into the next LLM call as `system` context, not as OpenAI `tool` role messages.
+- Redis DB 0 stores only `user` and `assistant` messages in one list keyed by `conversation:{conversation_id}`.
+- Redis DB 1 stores processed tool results keyed by `tool_cache:{conversation_id}:{tool_name}:{arguments_hash}`.
+- Tool results are not injected into prompt memory; backend tool execution checks Redis tool cache before calling ReNile.
 
 ## Prompt And Date Handling
 - The assistant must always answer in simple Egyptian Arabic.

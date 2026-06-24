@@ -68,10 +68,23 @@ class FakeReNileClient:
         }
 
 
+class FakeToolCache:
+    def __init__(self, cached_results: dict[tuple[str, str], dict] | None = None) -> None:
+        self.cached_results = cached_results or {}
+        self.stored_results: list[tuple[str, str, dict, dict]] = []
+
+    async def get(self, conversation_id: str, tool_name: str, arguments: dict) -> dict | None:
+        return self.cached_results.get((tool_name, json.dumps(arguments, sort_keys=True)))
+
+    async def set(self, conversation_id: str, tool_name: str, arguments: dict, result: dict) -> None:
+        self.stored_results.append((conversation_id, tool_name, arguments, result))
+
+
 @pytest.mark.asyncio
 async def test_historical_tool_resolves_device_name_before_api_call() -> None:
     renile_client = FakeReNileClient()
-    agent = FarmerAssistantAgent(llm=SimpleNamespace(), renile_client=renile_client)  # type: ignore[arg-type]
+    tool_cache = FakeToolCache()
+    agent = FarmerAssistantAgent(llm=SimpleNamespace(), renile_client=renile_client, tool_cache=tool_cache)  # type: ignore[arg-type]
     tool_call = SimpleNamespace(
         id="tool-1",
         function=SimpleNamespace(
@@ -87,6 +100,7 @@ async def test_historical_tool_resolves_device_name_before_api_call() -> None:
 
     tool_result, tool_context = await agent._execute_tool_call(  # noqa: SLF001
         {
+            "conversation_id": "conversation-1",
             "jwt": "runtime-jwt",
             "history": [],
             "user_message": "1",
@@ -99,12 +113,26 @@ async def test_historical_tool_resolves_device_name_before_api_call() -> None:
     assert tool_result["name"] == "get_last_duration_summary"
     assert tool_context is not None
     assert tool_context.tool_name == "get_last_duration_summary"
+    assert tool_cache.stored_results[0][1] == "get_devices_ids"
+    assert tool_cache.stored_results[1][1] == "get_last_duration_summary"
 
 
 @pytest.mark.asyncio
 async def test_historical_tool_uses_cached_device_selection_number() -> None:
     renile_client = FakeReNileClient()
-    agent = FarmerAssistantAgent(llm=SimpleNamespace(), renile_client=renile_client)  # type: ignore[arg-type]
+    tool_cache = FakeToolCache(
+        {
+            ("get_devices_ids", "{}"): {
+                "devices": [
+                    {
+                        "device_name": "Local Climate monitoring system",
+                        "device_id": "device-2",
+                    }
+                ]
+            }
+        }
+    )
+    agent = FarmerAssistantAgent(llm=SimpleNamespace(), renile_client=renile_client, tool_cache=tool_cache)  # type: ignore[arg-type]
     tool_call = SimpleNamespace(
         id="tool-1",
         function=SimpleNamespace(
@@ -115,23 +143,9 @@ async def test_historical_tool_uses_cached_device_selection_number() -> None:
 
     await agent._execute_tool_call(  # noqa: SLF001
         {
+            "conversation_id": "conversation-1",
             "jwt": "runtime-jwt",
-            "history": [
-                {
-                    "role": "tool_context",
-                    "tool_name": "get_devices_ids",
-                    "content": json.dumps(
-                        {
-                            "devices": [
-                                {
-                                    "device_name": "Local Climate monitoring system",
-                                    "device_id": "device-2",
-                                }
-                            ]
-                        }
-                    ),
-                }
-            ],
+            "history": [],
             "user_message": "1",
             "messages": [],
         },
@@ -139,3 +153,43 @@ async def test_historical_tool_uses_cached_device_selection_number() -> None:
     )
 
     assert renile_client.summary_device_id == "device-2"
+
+
+@pytest.mark.asyncio
+async def test_tool_call_uses_cached_result_before_api_call() -> None:
+    renile_client = FakeReNileClient()
+    tool_cache = FakeToolCache(
+        {
+            ("get_last_duration_summary", json.dumps({"device_id": "device-2", "start_time": "2026-06-05 00:00"}, sort_keys=True)): {
+                "device_id": "device-2",
+                "start_time": "2026-06-05 00:00",
+                "data_type": "month",
+                "daily_rows": [],
+            },
+            ("get_devices_ids", "{}"): {
+                "devices": [{"device_name": "Local Climate monitoring system", "device_id": "device-2"}]
+            },
+        }
+    )
+    agent = FarmerAssistantAgent(llm=SimpleNamespace(), renile_client=renile_client, tool_cache=tool_cache)  # type: ignore[arg-type]
+    tool_call = SimpleNamespace(
+        id="tool-1",
+        function=SimpleNamespace(
+            name="get_last_duration_summary",
+            arguments=json.dumps({"device_id": "device-2", "start_time": "2026-06-05 00:00"}),
+        ),
+    )
+
+    tool_result, _ = await agent._execute_tool_call(  # noqa: SLF001
+        {
+            "conversation_id": "conversation-1",
+            "jwt": "runtime-jwt",
+            "history": [],
+            "user_message": "1",
+            "messages": [],
+        },
+        tool_call,
+    )
+
+    assert renile_client.summary_device_id is None
+    assert json.loads(tool_result["content"])["daily_rows"] == []

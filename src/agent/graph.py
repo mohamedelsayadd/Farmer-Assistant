@@ -12,6 +12,7 @@ from agent.prompts import SYSTEM_PROMPT
 from agent.tools import OPENAI_TOOLS, execute_devices_ids_tool, execute_tool
 from core.logging import json_preview
 from memory.redis_memory import MemoryMessage
+from memory.tool_cache import ToolCache
 from providers.llm import LLMProvider
 from providers.renile_client import ReNileClient
 
@@ -22,6 +23,7 @@ HISTORICAL_READING_TOOL_NAMES = {"get_last_duration_summary", "get_specific_time
 
 
 class AgentState(TypedDict):
+    conversation_id: str
     jwt: str
     history: list[MemoryMessage]
     user_message: str
@@ -51,12 +53,19 @@ class AgentStreamResult:
 
 
 class FarmerAssistantAgent:
-    def __init__(self, llm: LLMProvider, renile_client: ReNileClient) -> None:
+    def __init__(self, llm: LLMProvider, renile_client: ReNileClient, tool_cache: ToolCache) -> None:
         self._llm = llm
         self._renile_client = renile_client
+        self._tool_cache = tool_cache
         self._graph = self._build_graph()
 
-    async def run(self, jwt: str, user_message: str, history: list[MemoryMessage]) -> AgentResult:
+    async def run(
+        self,
+        conversation_id: str,
+        jwt: str,
+        user_message: str,
+        history: list[MemoryMessage],
+    ) -> AgentResult:
         started_at = perf_counter()
         logger.info(
             "agent_run_started history_messages=%s user_message_chars=%s",
@@ -64,6 +73,7 @@ class FarmerAssistantAgent:
             len(user_message),
         )
         initial_state: AgentState = {
+            "conversation_id": conversation_id,
             "jwt": jwt,
             "history": history,
             "user_message": user_message,
@@ -81,7 +91,13 @@ class FarmerAssistantAgent:
         )
         return AgentResult(response=final_response, tool_contexts=tool_contexts)
 
-    async def run_stream(self, jwt: str, user_message: str, history: list[MemoryMessage]) -> AgentStreamResult:
+    async def run_stream(
+        self,
+        conversation_id: str,
+        jwt: str,
+        user_message: str,
+        history: list[MemoryMessage],
+    ) -> AgentStreamResult:
         started_at = perf_counter()
         logger.info(
             "agent_stream_run_started history_messages=%s user_message_chars=%s",
@@ -89,6 +105,7 @@ class FarmerAssistantAgent:
             len(user_message),
         )
         state: AgentState = {
+            "conversation_id": conversation_id,
             "jwt": jwt,
             "history": history,
             "user_message": user_message,
@@ -189,11 +206,26 @@ class FarmerAssistantAgent:
                 arguments, fallback_tool_result = await self._resolve_historical_arguments(state, arguments)
                 if fallback_tool_result is not None:
                     return self._successful_tool_result(tool_call, fallback_tool_result, tool_name="get_devices_ids")
+
+            cached_tool_result = await self._tool_cache.get(
+                conversation_id=state["conversation_id"],
+                tool_name=tool_call.function.name,
+                arguments=arguments,
+            )
+            if cached_tool_result is not None:
+                return self._successful_tool_result(tool_call, cached_tool_result)
+
             tool_result = await execute_tool(
                 tool_call.function.name,
                 jwt=state["jwt"],
                 arguments=arguments,
                 renile_client=self._renile_client,
+            )
+            await self._tool_cache.set(
+                conversation_id=state["conversation_id"],
+                tool_name=tool_call.function.name,
+                arguments=arguments,
+                result=tool_result,
             )
             return self._successful_tool_result(tool_call, tool_result)
         except (json.JSONDecodeError, ValueError, httpx.HTTPError):
@@ -225,41 +257,37 @@ class FarmerAssistantAgent:
         arguments: dict[str, Any],
     ) -> tuple[dict[str, Any], dict[str, Any] | None]:
         raw_device_id = str(arguments.get("device_id", "")).strip()
-        known_devices = self._devices_from_history(state["history"])
+        devices_result = await self._cached_or_fresh_devices_result(state)
+        known_devices = devices_result.get("devices", [])
+        if not isinstance(known_devices, list):
+            logger.warning("historical_device_resolution_invalid_cached_devices_result")
+            return arguments, devices_result
 
         resolved_device_id = self._resolve_device_id(raw_device_id, known_devices)
         if resolved_device_id:
             return {**arguments, "device_id": resolved_device_id}, None
 
-        devices_result = await execute_devices_ids_tool(jwt=state["jwt"], renile_client=self._renile_client)
-        fetched_devices = devices_result.get("devices", [])
-        if not isinstance(fetched_devices, list):
-            logger.warning("historical_device_resolution_invalid_devices_result")
-            return arguments, devices_result
-
-        resolved_device_id = self._resolve_device_id(raw_device_id, fetched_devices)
-        if resolved_device_id:
-            logger.info("historical_device_name_resolved_to_id")
-            return {**arguments, "device_id": resolved_device_id}, None
-
         logger.warning("historical_device_resolution_failed raw_device_id=%s", raw_device_id)
         return arguments, devices_result
 
-    @staticmethod
-    def _devices_from_history(history: list[MemoryMessage]) -> list[dict[str, Any]]:
-        devices: list[dict[str, Any]] = []
-        for message in history:
-            if message["role"] != "tool_context" or message.get("tool_name") != "get_devices_ids":
-                continue
-            try:
-                content = json.loads(message["content"])
-            except json.JSONDecodeError:
-                logger.warning("cached_devices_context_invalid_json")
-                continue
-            cached_devices = content.get("devices", [])
-            if isinstance(cached_devices, list):
-                devices.extend(device for device in cached_devices if isinstance(device, dict))
-        return devices
+    async def _cached_or_fresh_devices_result(self, state: AgentState) -> dict[str, Any]:
+        arguments: dict[str, Any] = {}
+        cached_devices_result = await self._tool_cache.get(
+            conversation_id=state["conversation_id"],
+            tool_name="get_devices_ids",
+            arguments=arguments,
+        )
+        if cached_devices_result is not None:
+            return cached_devices_result
+
+        devices_result = await execute_devices_ids_tool(jwt=state["jwt"], renile_client=self._renile_client)
+        await self._tool_cache.set(
+            conversation_id=state["conversation_id"],
+            tool_name="get_devices_ids",
+            arguments=arguments,
+            result=devices_result,
+        )
+        return devices_result
 
     @staticmethod
     def _resolve_device_id(raw_device_id: str, devices: list[dict[str, Any]]) -> str | None:
@@ -353,7 +381,7 @@ class FarmerAssistantAgent:
         messages: list[dict[str, Any]] = [
             {"role": "system", "content": FarmerAssistantAgent._system_prompt(history)}
         ]
-        messages.extend(FarmerAssistantAgent._history_message(message) for message in history if message["role"] != "tool_context")
+        messages.extend(FarmerAssistantAgent._history_message(message) for message in history)
         messages.append({"role": "user", "content": user_message})
         return messages
 
@@ -366,27 +394,7 @@ class FarmerAssistantAgent:
             "آخر أسبوع، آخر 3 أسابيع، آخر فترة، من يومين، يوم الأحد اللي فات، ومن شهر 1 لشهر 5."
         )
 
-        cached_contexts = FarmerAssistantAgent._cached_tool_contexts(history or [])
-        if cached_contexts:
-            prompt = f"{prompt}\n\n{cached_contexts}"
         return prompt
-
-    @staticmethod
-    def _cached_tool_contexts(history: list[MemoryMessage]) -> str:
-        contexts: list[str] = []
-        for message in history:
-            if message["role"] != "tool_context":
-                continue
-            tool_name = message.get("tool_name", "unknown_tool")
-            logger.info("agent_context_included tool_name=%s content_chars=%s", tool_name, len(message["content"]))
-            contexts.append(
-                f"Cached tool result from {tool_name}. Use it for follow-up questions if relevant. "
-                "Do not call the API again unless the user clearly asks for fresh or updated readings.\n\n"
-                f"{message['content']}"
-            )
-        if not contexts:
-            return ""
-        return "\n\n".join(contexts)
 
     @staticmethod
     def _history_message(message: MemoryMessage) -> dict[str, Any]:

@@ -82,18 +82,16 @@ async def test_memory_does_not_store_jwt() -> None:
 
 
 @pytest.mark.asyncio
-async def test_memory_stores_and_loads_tool_context() -> None:
+async def test_memory_ignores_legacy_tool_context_messages() -> None:
     redis = FakeRedis()
     memory = RedisMemory(redis=redis, ttl_seconds=3600, max_messages=12)  # type: ignore[arg-type]
-
-    await memory.append_tool_context("conversation-1", "get_current_readings", '{"devices": []}')
+    redis.data["conversation:conversation-1"] = [
+        json.dumps(
+            {"role": "tool_context", "tool_name": "get_current_readings", "content": '{"devices": []}'},
+            ensure_ascii=False,
+        )
+    ]
 
     messages = await memory.load("conversation-1")
 
-    assert messages == [
-        {
-            "role": "tool_context",
-            "tool_name": "get_current_readings",
-            "content": '{"devices": []}',
-        }
-    ]
+    assert messages == []
