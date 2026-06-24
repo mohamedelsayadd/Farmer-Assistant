@@ -9,7 +9,7 @@ import httpx
 from langgraph.graph import END, StateGraph
 
 from agent.prompts import SYSTEM_PROMPT
-from agent.tools import OPENAI_TOOLS, execute_tool
+from agent.tools import OPENAI_TOOLS, execute_devices_ids_tool, execute_tool
 from core.logging import json_preview
 from memory.redis_memory import MemoryMessage
 from providers.llm import LLMProvider
@@ -18,6 +18,7 @@ from providers.renile_client import ReNileClient
 logger = logging.getLogger(__name__)
 CURRENT_TOOL_NAMES = {"get_current_readings"}
 HISTORICAL_TOOL_NAMES = {"get_devices_ids", "get_last_duration_summary", "get_specific_time_readings"}
+HISTORICAL_READING_TOOL_NAMES = {"get_last_duration_summary", "get_specific_time_readings"}
 
 
 class AgentState(TypedDict):
@@ -118,14 +119,14 @@ class FarmerAssistantAgent:
             if tool_call.function.name not in allowed_tool_names:
                 self._log_skipped_tool_call(tool_call, allowed_tool_names)
                 continue
-            tool_result, tool_context = await self._execute_tool_call(state["jwt"], tool_call)
+            tool_result, tool_context = await self._execute_tool_call(state, tool_call)
             tool_results.append(tool_result)
             if tool_context:
                 tool_contexts.append(tool_context)
 
         return {"tool_results": tool_results, "tool_contexts": tool_contexts}
 
-    async def _execute_tool_call(self, jwt: str, tool_call: Any) -> tuple[dict[str, Any], ToolContext | None]:
+    async def _execute_tool_call(self, state: AgentState, tool_call: Any) -> tuple[dict[str, Any], ToolContext | None]:
         try:
             logger.info(
                 "tool_call_started tool_call_id=%s tool_name=%s raw_arguments=%s",
@@ -134,9 +135,13 @@ class FarmerAssistantAgent:
                 tool_call.function.arguments,
             )
             arguments = json.loads(tool_call.function.arguments or "{}")
+            if tool_call.function.name in HISTORICAL_READING_TOOL_NAMES:
+                arguments, fallback_tool_result = await self._resolve_historical_arguments(state, arguments)
+                if fallback_tool_result is not None:
+                    return self._successful_tool_result(tool_call, fallback_tool_result, tool_name="get_devices_ids")
             tool_result = await execute_tool(
                 tool_call.function.name,
-                jwt=jwt,
+                jwt=state["jwt"],
                 arguments=arguments,
                 renile_client=self._renile_client,
             )
@@ -146,18 +151,84 @@ class FarmerAssistantAgent:
             return self._failed_tool_result(tool_call), None
 
     @staticmethod
-    def _successful_tool_result(tool_call: Any, tool_result: dict[str, Any]) -> tuple[dict[str, Any], ToolContext]:
+    def _successful_tool_result(
+        tool_call: Any,
+        tool_result: dict[str, Any],
+        tool_name: str | None = None,
+    ) -> tuple[dict[str, Any], ToolContext]:
+        resolved_tool_name = tool_name or tool_call.function.name
         logger.info(
             "tool_call_completed tool_call_id=%s tool_name=%s result_preview=%s",
             tool_call.id,
-            tool_call.function.name,
+            resolved_tool_name,
             json_preview(tool_result),
         )
         content = json.dumps(tool_result, ensure_ascii=False)
         return (
-            {"role": "tool", "tool_call_id": tool_call.id, "name": tool_call.function.name, "content": content},
-            ToolContext(tool_name=tool_call.function.name, content=content),
+            {"role": "tool", "tool_call_id": tool_call.id, "name": resolved_tool_name, "content": content},
+            ToolContext(tool_name=resolved_tool_name, content=content),
         )
+
+    async def _resolve_historical_arguments(
+        self,
+        state: AgentState,
+        arguments: dict[str, Any],
+    ) -> tuple[dict[str, Any], dict[str, Any] | None]:
+        raw_device_id = str(arguments.get("device_id", "")).strip()
+        known_devices = self._devices_from_history(state["history"])
+
+        resolved_device_id = self._resolve_device_id(raw_device_id, known_devices)
+        if resolved_device_id:
+            return {**arguments, "device_id": resolved_device_id}, None
+
+        devices_result = await execute_devices_ids_tool(jwt=state["jwt"], renile_client=self._renile_client)
+        fetched_devices = devices_result.get("devices", [])
+        if not isinstance(fetched_devices, list):
+            logger.warning("historical_device_resolution_invalid_devices_result")
+            return arguments, devices_result
+
+        resolved_device_id = self._resolve_device_id(raw_device_id, fetched_devices)
+        if resolved_device_id:
+            logger.info("historical_device_name_resolved_to_id")
+            return {**arguments, "device_id": resolved_device_id}, None
+
+        logger.warning("historical_device_resolution_failed raw_device_id=%s", raw_device_id)
+        return arguments, devices_result
+
+    @staticmethod
+    def _devices_from_history(history: list[MemoryMessage]) -> list[dict[str, Any]]:
+        devices: list[dict[str, Any]] = []
+        for message in history:
+            if message["role"] != "tool_context" or message.get("tool_name") != "get_devices_ids":
+                continue
+            try:
+                content = json.loads(message["content"])
+            except json.JSONDecodeError:
+                logger.warning("cached_devices_context_invalid_json")
+                continue
+            cached_devices = content.get("devices", [])
+            if isinstance(cached_devices, list):
+                devices.extend(device for device in cached_devices if isinstance(device, dict))
+        return devices
+
+    @staticmethod
+    def _resolve_device_id(raw_device_id: str, devices: list[dict[str, Any]]) -> str | None:
+        if not raw_device_id:
+            return None
+        for device in devices:
+            device_id = str(device.get("device_id", "")).strip()
+            if raw_device_id == device_id:
+                return device_id
+
+        lowered_raw_device_id = raw_device_id.casefold()
+        for index, device in enumerate(devices, start=1):
+            device_name = str(device.get("device_name", "")).strip()
+            device_id = str(device.get("device_id", "")).strip()
+            if not device_id:
+                continue
+            if raw_device_id == str(index) or lowered_raw_device_id == device_name.casefold():
+                return device_id
+        return None
 
     @staticmethod
     def _failed_tool_result(tool_call: Any) -> dict[str, Any]:
