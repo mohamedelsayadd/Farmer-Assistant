@@ -13,9 +13,22 @@ class FakeCompletions:
 
     async def create(self, **kwargs):
         self.kwargs = kwargs
+        if kwargs.get("stream"):
+            return FakeStream(["درجة ", "الحرارة"])
         message = SimpleNamespace(content=self.response_content, tool_calls=[])
         choice = SimpleNamespace(message=message, finish_reason="stop")
         return SimpleNamespace(choices=[choice])
+
+
+class FakeStream:
+    def __init__(self, chunks: list[str]) -> None:
+        self._chunks = chunks
+
+    async def __aiter__(self):
+        for chunk in self._chunks:
+            delta = SimpleNamespace(content=chunk)
+            choice = SimpleNamespace(delta=delta)
+            yield SimpleNamespace(choices=[choice])
 
 
 class FakeAsyncOpenAI:
@@ -122,3 +135,25 @@ async def test_llm_provider_preserves_content_without_thinking_marker(monkeypatc
     response = await provider.chat([{"role": "user", "content": "اشرح"}])
 
     assert response.content == "الإجابة النهائية"
+
+
+@pytest.mark.asyncio
+async def test_llm_provider_streams_chat_chunks(monkeypatch) -> None:
+    monkeypatch.setattr(llm_module, "AsyncOpenAI", FakeAsyncOpenAI)
+    settings = SimpleNamespace(
+        llm_api_key="EMPTY",
+        llm_base_url="http://localhost:5000/v1",
+        llm_model="Qwen/Qwen3.6-27B-int4-AutoRound",
+        llm_enable_thinking=False,
+        llm_temperature=0.2,
+        llm_max_tokens=1024,
+        llm_top_p=0.8,
+        llm_top_k=20,
+    )
+    provider = LLMProvider(settings)
+
+    chunks = [chunk async for chunk in provider.stream_chat([{"role": "user", "content": "الحرارة كام؟"}])]
+
+    request_kwargs = FakeAsyncOpenAI.last_instance.completions.kwargs
+    assert request_kwargs["stream"] is True
+    assert chunks == ["درجة ", "الحرارة"]

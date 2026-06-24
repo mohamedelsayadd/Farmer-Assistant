@@ -3,7 +3,7 @@ import logging
 from dataclasses import dataclass
 from datetime import date
 from time import perf_counter
-from typing import Any, NotRequired, TypedDict
+from typing import Any, AsyncIterator, NotRequired, TypedDict
 
 import httpx
 from langgraph.graph import END, StateGraph
@@ -44,6 +44,12 @@ class AgentResult:
     tool_contexts: list[ToolContext]
 
 
+@dataclass(frozen=True)
+class AgentStreamResult:
+    chunks: AsyncIterator[str]
+    tool_contexts: list[ToolContext]
+
+
 class FarmerAssistantAgent:
     def __init__(self, llm: LLMProvider, renile_client: ReNileClient) -> None:
         self._llm = llm
@@ -74,6 +80,50 @@ class FarmerAssistantAgent:
             elapsed_ms,
         )
         return AgentResult(response=final_response, tool_contexts=tool_contexts)
+
+    async def run_stream(self, jwt: str, user_message: str, history: list[MemoryMessage]) -> AgentStreamResult:
+        started_at = perf_counter()
+        logger.info(
+            "agent_stream_run_started history_messages=%s user_message_chars=%s",
+            len(history),
+            len(user_message),
+        )
+        state: AgentState = {
+            "jwt": jwt,
+            "history": history,
+            "user_message": user_message,
+            "messages": self._build_messages(history, user_message),
+        }
+        agent_update = await self._agent_node(state)
+        state.update(agent_update)
+        tool_path = self._tool_path(state)
+        tool_contexts: list[ToolContext] = []
+
+        if tool_path == "current_tools":
+            tool_update = await self._current_tools_node(state)
+            state.update(tool_update)
+            tool_contexts = tool_update.get("tool_contexts", [])
+        elif tool_path == "historical_tools":
+            tool_update = await self._historical_tools_node(state)
+            state.update(tool_update)
+            tool_contexts = tool_update.get("tool_contexts", [])
+
+        stream_messages = self._stream_messages(state)
+
+        async def chunks() -> AsyncIterator[str]:
+            response_chars = 0
+            async for chunk in self._llm.stream_chat(stream_messages):
+                response_chars += len(chunk)
+                yield chunk
+            elapsed_ms = int((perf_counter() - started_at) * 1000)
+            logger.info(
+                "agent_stream_run_completed response_chars=%s tool_contexts=%s latency_ms=%s",
+                response_chars,
+                len(tool_contexts),
+                elapsed_ms,
+            )
+
+        return AgentStreamResult(chunks=chunks(), tool_contexts=tool_contexts)
 
     def _build_graph(self) -> Any:
         graph = StateGraph(AgentState)
@@ -267,6 +317,19 @@ class FarmerAssistantAgent:
         final_response = final_message.content or "معلش، مش قادر أوصل لإجابة واضحة دلوقتي."
         logger.info("final_node_completed used_tools=true response_chars=%s", len(final_response))
         return {"final_response": final_response}
+
+    @staticmethod
+    def _stream_messages(state: AgentState) -> list[dict[str, Any]]:
+        tool_results = state.get("tool_results", [])
+        if not tool_results:
+            return state["messages"]
+
+        assistant_message = state["assistant_message"]
+        return [
+            *state["messages"],
+            assistant_message.model_dump(exclude_none=True),
+            *tool_results,
+        ]
 
     @staticmethod
     def _tool_path(state: AgentState) -> str:

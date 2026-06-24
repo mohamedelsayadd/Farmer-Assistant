@@ -20,18 +20,19 @@ def reset_conversation() -> None:
     st.session_state.messages = []
 
 
-def send_chat_message(api_base_url: str, jwt: str, conversation_id: str, message: str) -> str:
-    endpoint = f"{api_base_url.rstrip('/')}/api/v1/chat"
+def stream_chat_message(api_base_url: str, jwt: str, conversation_id: str, message: str):
+    endpoint = f"{api_base_url.rstrip('/')}/api/v1/chat/stream"
     payload = {
         "jwt": jwt,
         "conversation_id": conversation_id,
         "message": message,
     }
     with httpx.Client(timeout=120.0) as client:
-        response = client.post(endpoint, json=payload)
-        response.raise_for_status()
-        response_payload = response.json()
-    return response_payload["message"]
+        with client.stream("POST", endpoint, json=payload) as response:
+            response.raise_for_status()
+            for chunk in response.iter_text():
+                if chunk:
+                    yield chunk
 
 
 def render_sidebar() -> tuple[str, str, str]:
@@ -80,22 +81,23 @@ def main() -> None:
         st.markdown(user_message)
 
     with st.chat_message("assistant"):
-        with st.spinner("المساعد بيرد..."):
-            try:
-                assistant_message = send_chat_message(
-                    api_base_url=api_base_url,
-                    jwt=jwt,
-                    conversation_id=conversation_id,
-                    message=user_message,
-                )
-            except httpx.HTTPStatusError as exc:
-                assistant_message = f"Backend returned {exc.response.status_code}: {exc.response.text}"
-                st.error(assistant_message)
-            except httpx.HTTPError as exc:
-                assistant_message = f"Could not reach backend: {exc}"
-                st.error(assistant_message)
-            else:
-                st.markdown(assistant_message)
+        assistant_placeholder = st.empty()
+        assistant_message = ""
+        try:
+            for chunk in stream_chat_message(
+                api_base_url=api_base_url,
+                jwt=jwt,
+                conversation_id=conversation_id,
+                message=user_message,
+            ):
+                assistant_message += chunk
+                assistant_placeholder.markdown(assistant_message)
+        except httpx.HTTPStatusError as exc:
+            assistant_message = f"Backend returned {exc.response.status_code}: {exc.response.text}"
+            st.error(assistant_message)
+        except httpx.HTTPError as exc:
+            assistant_message = f"Could not reach backend: {exc}"
+            st.error(assistant_message)
 
     st.session_state.messages.append({"role": "assistant", "content": assistant_message})
 
