@@ -1,45 +1,47 @@
 # Repository Instructions
 
 ## Commands
-- Use `uv` for all Python commands; do not use `pip` directly.
-- Run tests with `uv run pytest`; run a focused test with `uv run pytest tests/test_tools.py` or `uv run pytest tests/test_tools.py::test_name`.
+- Use `uv` for Python work; do not use `pip` directly. Install/sync with `uv sync`.
+- Run all tests with `uv run pytest`; run focused tests with `uv run pytest tests/test_tools.py` or `uv run pytest tests/test_tools.py::test_name`.
 - Syntax-check backend code with `uv run python -m compileall src`; syntax-check the Streamlit client with `uv run python -m py_compile streamlit_app.py`.
-- Start Redis and vLLM before running the API: `docker compose -f docker/compose.yaml up -d redis vllm`.
-- Start the FastAPI app from the repo root with `uv run uvicorn main:app --reload`.
-- Start the manual Streamlit tester with `uv run streamlit run streamlit_app.py`.
+- Start local Redis with `docker compose -f docker/compose.yaml up -d redis`. This compose file does not start an LLM server.
+- Start the FastAPI app from the repo root with `uv run uvicorn main:app --reload`; startup pings Redis DB 0 and DB 1.
+- Start the manual tester with `uv run streamlit run streamlit_app.py`.
 
 ## Runtime Setup
-- Settings load from root `.env` via `pydantic-settings`; keep real secrets only in `.env`, which is gitignored.
-- `.env.example` is the source of expected env names. Important values: OpenAI-compatible LLM settings, Redis URLs, ReNile base/path values, and `CHAT_API_BASE_URL` for Streamlit.
-- Redis is required at app startup because `src/main.py` pings Redis in lifespan.
-- Memory TTL is 1 hour and max memory messages is 12 unless `.env` changes it.
+- Settings load from root `.env` via `pydantic-settings`; `.env.example` is the verified list of env names. Keep real secrets only in `.env`.
+- Required external services for live API use: Redis, an OpenAI-compatible LLM endpoint from `LLM_BASE_URL`, and ReNile API access/JWT.
+- Streamlit defaults to `CHAT_API_BASE_URL` or `http://localhost:8001`; `.env.example` uses `http://localhost:8000`, so verify the sidebar URL.
 
 ## Entrypoints
-- FastAPI app: `src/main.py` exposes `/health` and includes `/api/v1/chat`.
-- Chat request schema is `jwt`, `conversation_id`, `message`; response is only `conversation_id` and `message`.
-- Manual UI: `streamlit_app.py` calls `POST /api/v1/chat/stream` and keeps only UI-local display history.
+- FastAPI app: `src/main.py`; routes: `/health`, `POST /api/v1/chat`, and `POST /api/v1/chat/stream`.
+- Chat request schema is `jwt`, `conversation_id`, `message`; response schema is `conversation_id`, `message`.
+- `streamlit_app.py` calls only `POST /api/v1/chat/stream` and keeps display history locally.
 
 ## Agent And Tools
-- Agent graph lives in `src/agent/graph.py`; tool schemas and execution live in `src/agent/tools.py`.
-- Tool routing is split by name: `get_current_readings` goes to `current_tools`; `get_devices_ids`, `get_last_duration_summary`, and `get_specific_time_readings` go to `historical_tools`.
-- JWT must never be exposed to LLM tool schemas, prompts, memory, or logs; it is injected only at backend tool execution.
-- `get_devices_ids` is the mandatory device discovery tool for historical flows; historical tools require a `device_id` resolved from that context.
-- `get_last_duration_summary` uses ReNile `/api/v1/data/` with backend-fixed `data_type=month` and returns daily rows.
-- `get_specific_time_readings` uses the same endpoint with backend-fixed `data_type=day` and returns hourly rows.
-- `get_current_readings` and `get_devices_ids` both use `/api/users/devices/` but different processors.
+- Agent graph/prompt/tool routing live in `src/agent/graph.py` and `src/agent/prompts.py`; agent-visible tool schemas plus backend execution live in `src/agent/tools.py`.
+- Tool routing is name-based: `get_current_readings` goes to `current_tools`; `get_devices_ids`, `get_last_duration_summary`, and `get_specific_time_readings` go to `historical_tools`.
+- JWT must never be exposed to LLM tool schemas, prompts, Redis memory, or logs; it is injected only during backend tool execution.
+- Historical flows must call `get_devices_ids` before reading tools; historical tools require a real `device_id` resolved from the device list, never a device name.
+- `get_last_duration_summary` calls ReNile `/api/v1/data/` with backend-fixed `data_type=month` and returns daily rows.
+- `get_specific_time_readings` calls the same endpoint with backend-fixed `data_type=day` and returns hourly rows.
+- `get_current_readings` and `get_devices_ids` both call `/api/users/devices/` but use different processors.
+- Streaming orchestration uses non-streaming LLM calls for internal tool decisions, then token-streams the final answer; keep multi-tool historical follow-ups covered in `tests/test_agent_graph_routing.py`.
 
-## Memory Behavior
-- Redis DB 0 stores only `user` and `assistant` messages in one list keyed by `conversation:{conversation_id}`.
-- Redis DB 1 stores processed tool results keyed by `tool_cache:{conversation_id}:{tool_name}:{arguments_hash}`.
-- Tool results are not injected into prompt memory; backend tool execution checks Redis tool cache before calling ReNile.
+## Memory And Cache
+- Redis DB 0 stores only `user` and `assistant` messages in `conversation:{conversation_id}`; defaults are TTL `3600` seconds and max `12` messages.
+- Redis DB 1 stores processed tool results as `tool_cache:{conversation_id}:{tool_name}:{arguments_hash}`; default TTL in `.env.example` is `600` seconds.
+- Tool results are not injected into prompt memory. Tool execution checks Redis tool cache before calling ReNile.
 
-## Prompt And Date Handling
-- The assistant must always answer in simple Egyptian Arabic.
-- `src/agent/graph.py` injects today’s date into the system prompt so the LLM can resolve phrases like `امبارح`, `من يومين`, `آخر أسبوع`, and `يوم الأحد اللي فات`.
-- For historical requests, the prompt tells the model to ask for device name first if the user did not provide one.
+## Prompt Rules To Preserve
+- Fully English user messages should get English replies; Arabic or mixed Arabic/English should get Egyptian Arabic replies.
+- Out-of-scope questions should reply exactly: `آسف، مقدرش أرد على سؤالك.`
+- Do not answer or call tools for farm/device readings before `2026-01-01`; reply exactly: `القراءات قبل 2026 غير متاحة.`
+- `src/agent/graph.py` injects today’s date into the system prompt for relative dates like `امبارح`, `من يومين`, and `آخر أسبوع`.
 
-## Testing Notes
-- Existing tests use fake Redis/client objects; do not require real Redis, vLLM, or ReNile APIs.
-- After changing tool schemas, update `tests/test_tools.py` because it asserts no JWT/data_type exposure for agent-visible tools.
-- After changing graph routing, update `tests/test_agent_graph_routing.py`.
-- After changing response processors, update the matching processor tests under `tests/`.
+## Test Update Map
+- Tool schema changes: update `tests/test_tools.py` because it asserts no JWT or backend-fixed `data_type` exposure.
+- Graph routing or streaming/tool orchestration changes: update `tests/test_agent_graph_routing.py`.
+- Prompt/date/language/scope changes: update `tests/test_agent_memory_context.py`.
+- Response processor changes: update the matching processor tests under `tests/`.
+- Existing tests use fakes and should not require live Redis, LLM, or ReNile APIs.
