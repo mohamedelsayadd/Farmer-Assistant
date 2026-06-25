@@ -23,3 +23,12 @@ def test_build_messages_injects_current_date() -> None:
     messages = FarmerAssistantAgent._build_messages(history=[], user_message="آخر أسبوع؟")
 
     assert "تاريخ النهاردة:" in messages[0]["content"]
+
+
+def test_system_prompt_restricts_answers_to_agriculture_and_device_readings() -> None:
+    messages = FarmerAssistantAgent._build_messages(history=[], user_message="اكتبلي كود بايثون")
+    system_prompt = messages[0]["content"]
+
+    assert "Only answer questions about agriculture" in system_prompt
+    assert "Refuse any question outside agriculture or farm/device readings" in system_prompt
+    assert "أقدر أساعدك بس في أسئلة الزراعة وقراءات أجهزة المزرعة" in system_prompt
