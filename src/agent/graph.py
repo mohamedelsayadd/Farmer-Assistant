@@ -20,6 +20,8 @@ logger = logging.getLogger(__name__)
 CURRENT_TOOL_NAMES = {"get_current_readings"}
 HISTORICAL_TOOL_NAMES = {"get_devices_ids", "get_last_duration_summary", "get_specific_time_readings"}
 HISTORICAL_READING_TOOL_NAMES = {"get_last_duration_summary", "get_specific_time_readings"}
+MAX_STREAM_TOOL_ROUNDS = 4
+STREAM_FALLBACK_RESPONSE = "معلش، مش قادر أوصل لإجابة واضحة دلوقتي."
 
 
 class AgentState(TypedDict):
@@ -111,27 +113,39 @@ class FarmerAssistantAgent:
             "user_message": user_message,
             "messages": self._build_messages(history, user_message),
         }
-        agent_update = await self._agent_node(state)
-        state.update(agent_update)
-        tool_path = self._tool_path(state)
         tool_contexts: list[ToolContext] = []
+        final_response = STREAM_FALLBACK_RESPONSE
 
-        if tool_path == "current_tools":
-            tool_update = await self._current_tools_node(state)
-            state.update(tool_update)
-            tool_contexts = tool_update.get("tool_contexts", [])
-        elif tool_path == "historical_tools":
-            tool_update = await self._historical_tools_node(state)
-            state.update(tool_update)
-            tool_contexts = tool_update.get("tool_contexts", [])
+        for tool_round in range(MAX_STREAM_TOOL_ROUNDS + 1):
+            agent_update = await self._agent_node(state)
+            state.update(agent_update)
+            assistant_message = state["assistant_message"]
+            tool_path = self._tool_path(state)
 
-        stream_messages = self._stream_messages(state)
+            if tool_path == "final":
+                final_response = assistant_message.content or STREAM_FALLBACK_RESPONSE
+                break
+            if tool_round == MAX_STREAM_TOOL_ROUNDS:
+                logger.warning("agent_stream_tool_round_limit_reached max_rounds=%s", MAX_STREAM_TOOL_ROUNDS)
+                break
+
+            if tool_path == "current_tools":
+                tool_update = await self._current_tools_node(state)
+            elif tool_path == "historical_tools":
+                tool_update = await self._historical_tools_node(state)
+            else:
+                final_response = assistant_message.content or STREAM_FALLBACK_RESPONSE
+                break
+
+            state.update(tool_update)
+            tool_contexts.extend(tool_update.get("tool_contexts", []))
+            state["messages"] = self._messages_after_tools(state)
 
         async def chunks() -> AsyncIterator[str]:
             response_chars = 0
-            async for chunk in self._llm.stream_chat(stream_messages):
-                response_chars += len(chunk)
-                yield chunk
+            if final_response:
+                response_chars += len(final_response)
+                yield final_response
             elapsed_ms = int((perf_counter() - started_at) * 1000)
             logger.info(
                 "agent_stream_run_completed response_chars=%s tool_contexts=%s latency_ms=%s",
@@ -347,11 +361,8 @@ class FarmerAssistantAgent:
         return {"final_response": final_response}
 
     @staticmethod
-    def _stream_messages(state: AgentState) -> list[dict[str, Any]]:
+    def _messages_after_tools(state: AgentState) -> list[dict[str, Any]]:
         tool_results = state.get("tool_results", [])
-        if not tool_results:
-            return state["messages"]
-
         assistant_message = state["assistant_message"]
         return [
             *state["messages"],

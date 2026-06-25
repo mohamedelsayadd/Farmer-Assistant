@@ -84,7 +84,11 @@ class ChatService:
                 response_chunks.append(chunk)
                 yield chunk
 
-            assistant_response = "".join(response_chunks) or "معلش، مش قادر أوصل لإجابة واضحة دلوقتي."
+            assistant_response = "".join(response_chunks)
+            if not assistant_response:
+                assistant_response = "معلش، مش قادر أوصل لإجابة واضحة دلوقتي."
+                response_chunks.append(assistant_response)
+                yield assistant_response
             await self._memory.append(request.conversation_id, "user", request.message)
             await self._memory.append(request.conversation_id, "assistant", assistant_response)
             elapsed_ms = int((perf_counter() - started_at) * 1000)
