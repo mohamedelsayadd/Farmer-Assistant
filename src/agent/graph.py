@@ -22,6 +22,10 @@ HISTORICAL_TOOL_NAMES = {"get_devices_ids", "get_last_duration_summary", "get_sp
 HISTORICAL_READING_TOOL_NAMES = {"get_last_duration_summary", "get_specific_time_readings"}
 MAX_STREAM_TOOL_ROUNDS = 4
 STREAM_FALLBACK_RESPONSE = "معلش، مش قادر أوصل لإجابة واضحة دلوقتي."
+FINAL_STREAM_INSTRUCTION = (
+    "اكتب نفس الإجابة النهائية السابقة للمستخدم فقط وبنفس المعنى. "
+    "لا تطلب أدوات، ولا تضيف تفاصيل داخلية، ولا تذكر APIs أو JSON أو device_id."
+)
 
 
 class AgentState(TypedDict):
@@ -115,6 +119,7 @@ class FarmerAssistantAgent:
         }
         tool_contexts: list[ToolContext] = []
         final_response = STREAM_FALLBACK_RESPONSE
+        final_stream_messages: list[dict[str, Any]] | None = None
 
         for tool_round in range(MAX_STREAM_TOOL_ROUNDS + 1):
             agent_update = await self._agent_node(state)
@@ -124,6 +129,7 @@ class FarmerAssistantAgent:
 
             if tool_path == "final":
                 final_response = assistant_message.content or STREAM_FALLBACK_RESPONSE
+                final_stream_messages = self._final_stream_messages(state, final_response)
                 break
             if tool_round == MAX_STREAM_TOOL_ROUNDS:
                 logger.warning("agent_stream_tool_round_limit_reached max_rounds=%s", MAX_STREAM_TOOL_ROUNDS)
@@ -143,7 +149,11 @@ class FarmerAssistantAgent:
 
         async def chunks() -> AsyncIterator[str]:
             response_chars = 0
-            if final_response:
+            if final_stream_messages is not None:
+                async for chunk in self._llm.stream_chat(final_stream_messages):
+                    response_chars += len(chunk)
+                    yield chunk
+            if response_chars == 0:
                 response_chars += len(final_response)
                 yield final_response
             elapsed_ms = int((perf_counter() - started_at) * 1000)
@@ -368,6 +378,14 @@ class FarmerAssistantAgent:
             *state["messages"],
             assistant_message.model_dump(exclude_none=True),
             *tool_results,
+        ]
+
+    @staticmethod
+    def _final_stream_messages(state: AgentState, final_response: str) -> list[dict[str, Any]]:
+        return [
+            *state["messages"],
+            {"role": "assistant", "content": final_response},
+            {"role": "user", "content": FINAL_STREAM_INSTRUCTION},
         ]
 
     @staticmethod
