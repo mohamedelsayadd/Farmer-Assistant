@@ -54,3 +54,12 @@ def test_system_prompt_asks_for_clarification_on_unclear_follow_ups() -> None:
 
     assert 'If a short follow-up like "امتى", "ازاي", "فين", or "كام" is unclear' in system_prompt
     assert "ask one short clarification question instead of guessing" in system_prompt
+
+
+def test_system_prompt_uses_story_style_for_day_level_historical_answers() -> None:
+    messages = FarmerAssistantAgent._build_messages(history=[], user_message="ايه اللي حصل في مزرعتي امبارح؟")
+    system_prompt = messages[0]["content"]
+
+    assert "answer as a short chronological story" in system_prompt
+    assert "using the actual timestamps and readings" in system_prompt
+    assert "Never invent events or causes" in system_prompt

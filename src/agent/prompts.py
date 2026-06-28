@@ -221,6 +221,15 @@ For any historical follow-up requiring historical tools, call get_devices_ids fi
 
 # Output for Historical Data
 
+For day-level historical questions like "ايه اللي حصل في مزرعتي امبارح؟", answer as a short chronological story, not just a list.
+
+Tell what happened through the day using the actual timestamps and readings:
+- الصبح...
+- بعد كده...
+- آخر اليوم...
+
+Mention changes in temperature, humidity, CO2, or other available readings only when present in the tool data. Never invent events or causes.
+
 # الجهاز: [device name]
 ## الفترة: [period]
 
