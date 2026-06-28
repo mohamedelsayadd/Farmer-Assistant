@@ -227,7 +227,7 @@ async def test_tool_call_uses_cached_result_before_api_call() -> None:
     assert json.loads(tool_result["content"])["daily_rows"] == []
 
 
-class FakeStreamingLLM:
+class FakeMultiRoundLLM:
     def __init__(self) -> None:
         self.calls = 0
         self.message_counts: list[int] = []
@@ -246,7 +246,7 @@ class FakeStreamingLLM:
         return FakeAssistantMessage(content="ده ملخص درجات الحرارة لآخر أسبوع.")
 
 
-class FakeStreamingReNileClient:
+class FakeMultiRoundReNileClient:
     def __init__(self) -> None:
         self.summary_device_id = None
 
@@ -272,12 +272,12 @@ class FakeStreamingReNileClient:
 
 
 @pytest.mark.asyncio
-async def test_run_stream_supports_multiple_tool_rounds_for_device_selection_follow_up() -> None:
-    llm = FakeStreamingLLM()
-    renile_client = FakeStreamingReNileClient()
+async def test_run_supports_multiple_tool_rounds_for_device_selection_follow_up() -> None:
+    llm = FakeMultiRoundLLM()
+    renile_client = FakeMultiRoundReNileClient()
     agent = FarmerAssistantAgent(llm=llm, renile_client=renile_client, tool_cache=FakeToolCache())  # type: ignore[arg-type]
 
-    result = await agent.run_stream(
+    result = await agent.run(
         conversation_id="conversation-1",
         jwt="runtime-jwt",
         user_message="7",
@@ -290,9 +290,7 @@ async def test_run_stream_supports_multiple_tool_rounds_for_device_selection_fol
         ],
     )
 
-    chunks = [chunk async for chunk in result.chunks]
-
-    assert chunks == ["ده ملخص درجات الحرارة لآخر أسبوع."]
+    assert result.response == "ده ملخص درجات الحرارة لآخر أسبوع."
     assert llm.calls == 3
     assert llm.message_counts == [4, 6, 8]
     assert renile_client.summary_device_id == "device-7"

@@ -14,9 +14,9 @@
 - Streamlit defaults to `CHAT_API_BASE_URL` or `http://localhost:8001`; `.env.example` uses `http://localhost:8000`, so verify the sidebar URL.
 
 ## Entrypoints
-- FastAPI app: `src/main.py`; routes: `/health`, `POST /api/v1/chat`, and `POST /api/v1/chat/stream`.
+- FastAPI app: `src/main.py`; routes: `/health` and `POST /api/v1/chat`.
 - Chat request schema is `jwt`, `conversation_id`, `message`; response schema is `conversation_id`, `message`.
-- `streamlit_app.py` calls only `POST /api/v1/chat/stream` and keeps display history locally.
+- `streamlit_app.py` calls only `POST /api/v1/chat` and keeps display history locally.
 
 ## Agent And Tools
 - Agent graph/prompt/tool routing live in `src/agent/graph.py` and `src/agent/prompts.py`; agent-visible tool schemas plus backend execution live in `src/agent/tools.py`.
@@ -26,7 +26,7 @@
 - `get_last_duration_summary` calls ReNile `/api/v1/data/` with backend-fixed `data_type=month` and returns daily rows.
 - `get_specific_time_readings` calls the same endpoint with backend-fixed `data_type=day` and returns hourly rows.
 - `get_current_readings` and `get_devices_ids` both call `/api/users/devices/` but use different processors.
-- Streaming orchestration uses non-streaming LLM calls for internal tool decisions, then token-streams the final answer; keep multi-tool historical follow-ups covered in `tests/test_agent_graph_routing.py`.
+- Agent orchestration uses regular LLM chat calls and supports bounded multi-tool historical follow-ups covered in `tests/test_agent_graph_routing.py`.
 
 ## Memory And Cache
 - Redis DB 0 stores only `user` and `assistant` messages in `conversation:{conversation_id}`; defaults are TTL `3600` seconds and max `12` messages.
@@ -41,7 +41,7 @@
 
 ## Test Update Map
 - Tool schema changes: update `tests/test_tools.py` because it asserts no JWT or backend-fixed `data_type` exposure.
-- Graph routing or streaming/tool orchestration changes: update `tests/test_agent_graph_routing.py`.
+- Graph routing or tool orchestration changes: update `tests/test_agent_graph_routing.py`.
 - Prompt/date/language/scope changes: update `tests/test_agent_memory_context.py`.
 - Response processor changes: update the matching processor tests under `tests/`.
 - Existing tests use fakes and should not require live Redis, LLM, or ReNile APIs.

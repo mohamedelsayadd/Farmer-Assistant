@@ -3,10 +3,9 @@ import logging
 from dataclasses import dataclass
 from datetime import date
 from time import perf_counter
-from typing import Any, AsyncIterator, NotRequired, TypedDict
+from typing import Any, NotRequired, TypedDict
 
 import httpx
-from langgraph.graph import END, StateGraph
 
 from agent.prompts import SYSTEM_PROMPT
 from agent.tools import OPENAI_TOOLS, execute_devices_ids_tool, execute_tool
@@ -20,8 +19,8 @@ logger = logging.getLogger(__name__)
 CURRENT_TOOL_NAMES = {"get_current_readings"}
 HISTORICAL_TOOL_NAMES = {"get_devices_ids", "get_last_duration_summary", "get_specific_time_readings"}
 HISTORICAL_READING_TOOL_NAMES = {"get_last_duration_summary", "get_specific_time_readings"}
-MAX_STREAM_TOOL_ROUNDS = 4
-STREAM_FALLBACK_RESPONSE = "معلش، مش قادر أوصل لإجابة واضحة دلوقتي."
+MAX_TOOL_ROUNDS = 4
+FALLBACK_RESPONSE = "معلش، مش قادر أوصل لإجابة واضحة دلوقتي."
 
 
 class AgentState(TypedDict):
@@ -48,18 +47,11 @@ class AgentResult:
     tool_contexts: list[ToolContext]
 
 
-@dataclass(frozen=True)
-class AgentStreamResult:
-    chunks: AsyncIterator[str]
-    tool_contexts: list[ToolContext]
-
-
 class FarmerAssistantAgent:
     def __init__(self, llm: LLMProvider, renile_client: ReNileClient, tool_cache: ToolCache) -> None:
         self._llm = llm
         self._renile_client = renile_client
         self._tool_cache = tool_cache
-        self._graph = self._build_graph()
 
     async def run(
         self,
@@ -74,38 +66,6 @@ class FarmerAssistantAgent:
             len(history),
             len(user_message),
         )
-        initial_state: AgentState = {
-            "conversation_id": conversation_id,
-            "jwt": jwt,
-            "history": history,
-            "user_message": user_message,
-            "messages": self._build_messages(history, user_message),
-        }
-        result = await self._graph.ainvoke(initial_state)
-        final_response = result.get("final_response") or "معلش، حصلت مشكلة مؤقتة. جرّب تاني بعد شوية."
-        elapsed_ms = int((perf_counter() - started_at) * 1000)
-        tool_contexts = result.get("tool_contexts", [])
-        logger.info(
-            "agent_run_completed response_chars=%s tool_contexts=%s latency_ms=%s",
-            len(final_response),
-            len(tool_contexts),
-            elapsed_ms,
-        )
-        return AgentResult(response=final_response, tool_contexts=tool_contexts)
-
-    async def run_stream(
-        self,
-        conversation_id: str,
-        jwt: str,
-        user_message: str,
-        history: list[MemoryMessage],
-    ) -> AgentStreamResult:
-        started_at = perf_counter()
-        logger.info(
-            "agent_stream_run_started history_messages=%s user_message_chars=%s",
-            len(history),
-            len(user_message),
-        )
         state: AgentState = {
             "conversation_id": conversation_id,
             "jwt": jwt,
@@ -114,19 +74,19 @@ class FarmerAssistantAgent:
             "messages": self._build_messages(history, user_message),
         }
         tool_contexts: list[ToolContext] = []
-        final_response = STREAM_FALLBACK_RESPONSE
+        final_response = FALLBACK_RESPONSE
 
-        for tool_round in range(MAX_STREAM_TOOL_ROUNDS + 1):
+        for tool_round in range(MAX_TOOL_ROUNDS + 1):
             agent_update = await self._agent_node(state)
             state.update(agent_update)
             assistant_message = state["assistant_message"]
             tool_path = self._tool_path(state)
 
             if tool_path == "final":
-                final_response = assistant_message.content or STREAM_FALLBACK_RESPONSE
+                final_response = assistant_message.content or FALLBACK_RESPONSE
                 break
-            if tool_round == MAX_STREAM_TOOL_ROUNDS:
-                logger.warning("agent_stream_tool_round_limit_reached max_rounds=%s", MAX_STREAM_TOOL_ROUNDS)
+            if tool_round == MAX_TOOL_ROUNDS:
+                logger.warning("agent_tool_round_limit_reached max_rounds=%s", MAX_TOOL_ROUNDS)
                 break
 
             if tool_path == "current_tools":
@@ -134,42 +94,21 @@ class FarmerAssistantAgent:
             elif tool_path == "historical_tools":
                 tool_update = await self._historical_tools_node(state)
             else:
-                final_response = assistant_message.content or STREAM_FALLBACK_RESPONSE
+                final_response = assistant_message.content or FALLBACK_RESPONSE
                 break
 
             state.update(tool_update)
             tool_contexts.extend(tool_update.get("tool_contexts", []))
             state["messages"] = self._messages_after_tools(state)
 
-        async def chunks() -> AsyncIterator[str]:
-            yield final_response
-            response_chars = len(final_response)
-            elapsed_ms = int((perf_counter() - started_at) * 1000)
-            logger.info(
-                "agent_stream_run_completed response_chars=%s tool_contexts=%s latency_ms=%s",
-                response_chars,
-                len(tool_contexts),
-                elapsed_ms,
-            )
-
-        return AgentStreamResult(chunks=chunks(), tool_contexts=tool_contexts)
-
-    def _build_graph(self) -> Any:
-        graph = StateGraph(AgentState)
-        graph.add_node("agent", self._agent_node)
-        graph.add_node("current_tools", self._current_tools_node)
-        graph.add_node("historical_tools", self._historical_tools_node)
-        graph.add_node("final", self._final_node)
-        graph.set_entry_point("agent")
-        graph.add_conditional_edges(
-            "agent",
-            self._tool_path,
-            {"current_tools": "current_tools", "historical_tools": "historical_tools", "final": "final"},
+        elapsed_ms = int((perf_counter() - started_at) * 1000)
+        logger.info(
+            "agent_run_completed response_chars=%s tool_contexts=%s latency_ms=%s",
+            len(final_response),
+            len(tool_contexts),
+            elapsed_ms,
         )
-        graph.add_edge("current_tools", "final")
-        graph.add_edge("historical_tools", "final")
-        graph.add_edge("final", END)
-        return graph.compile()
+        return AgentResult(response=final_response, tool_contexts=tool_contexts)
 
     async def _agent_node(self, state: AgentState) -> dict[str, Any]:
         logger.info("agent_node_started messages=%s available_tools=%s", len(state["messages"]), len(OPENAI_TOOLS))
@@ -337,26 +276,6 @@ class FarmerAssistantAgent:
             tool_call.function.name,
             sorted(allowed_tool_names),
         )
-
-    async def _final_node(self, state: AgentState) -> dict[str, str]:
-        assistant_message = state["assistant_message"]
-        tool_results = state.get("tool_results", [])
-        logger.info("final_node_started tool_results=%s", len(tool_results))
-
-        if not tool_results:
-            final_response = assistant_message.content or "ممكن توضّحلي سؤالك أكتر؟"
-            logger.info("final_node_completed used_tools=false response_chars=%s", len(final_response))
-            return {"final_response": final_response}
-
-        messages = [
-            *state["messages"],
-            assistant_message.model_dump(exclude_none=True),
-            *tool_results,
-        ]
-        final_message = await self._llm.chat(messages)
-        final_response = final_message.content or "معلش، مش قادر أوصل لإجابة واضحة دلوقتي."
-        logger.info("final_node_completed used_tools=true response_chars=%s", len(final_response))
-        return {"final_response": final_response}
 
     @staticmethod
     def _messages_after_tools(state: AgentState) -> list[dict[str, Any]]:

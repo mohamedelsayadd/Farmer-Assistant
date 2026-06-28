@@ -14,8 +14,6 @@ dependencies = [
     "transformers>=5.10.2",
     "torch>=2.12.0",
     "streamlit>=1.58.0",
-    "langgraph>=1.2.5",
-    "langchain-core>=1.4.7",
 ]
 
 [dependency-groups]

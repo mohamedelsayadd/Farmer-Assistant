@@ -129,16 +129,6 @@ Response body:
 
 The JWT is required by the backend to call ReNile APIs. It is not exposed to the LLM tool schemas, prompts, memory, or logs.
 
-### `POST /api/v1/chat/stream`
-
-Uses the same request body as `/api/v1/chat`, but returns the assistant answer as a plain HTTP text stream:
-
-```text
-Content-Type: text/plain; charset=utf-8
-```
-
-The backend still saves the full assistant response to Redis after the stream completes.
-
 ## Manual Streamlit Tester
 
 Run the Streamlit client:
@@ -152,6 +142,8 @@ In the sidebar, provide:
 - Backend URL, for example `http://localhost:8000`.
 - ReNile JWT.
 - Conversation ID, generated automatically unless changed manually.
+
+The tester calls `POST /api/v1/chat` and keeps display history locally.
 
 ## Agent Tools
 
