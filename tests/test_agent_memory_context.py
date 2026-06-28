@@ -46,3 +46,11 @@ def test_system_prompt_sets_response_language_and_blocks_pre_2026_readings() -> 
     assert "Give me a summary for last week" in system_prompt
     assert "Never answer or call tools for readings before 2026-01-01" in system_prompt
     assert "القراءات قبل 2026 غير متاحة." in system_prompt
+
+
+def test_system_prompt_asks_for_clarification_on_unclear_follow_ups() -> None:
+    messages = FarmerAssistantAgent._build_messages(history=[], user_message="كام؟")
+    system_prompt = messages[0]["content"]
+
+    assert 'If a short follow-up like "امتى", "ازاي", "فين", or "كام" is unclear' in system_prompt
+    assert "ask one short clarification question instead of guessing" in system_prompt
