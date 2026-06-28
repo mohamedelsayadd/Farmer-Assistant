@@ -231,7 +231,6 @@ class FakeStreamingLLM:
     def __init__(self) -> None:
         self.calls = 0
         self.message_counts: list[int] = []
-        self.stream_message_counts: list[int] = []
 
     async def chat(self, messages: list[dict], tools: list[dict] | None = None) -> FakeAssistantMessage:
         assert tools is not None
@@ -245,13 +244,6 @@ class FakeStreamingLLM:
                 arguments={"device_id": "7", "start_time": "2026-06-18 00:00"},
             )
         return FakeAssistantMessage(content="ده ملخص درجات الحرارة لآخر أسبوع.")
-
-    async def stream_chat(self, messages: list[dict]):
-        self.stream_message_counts.append(len(messages))
-        assert messages[-2] == {"role": "assistant", "content": "ده ملخص درجات الحرارة لآخر أسبوع."}
-        assert "لا تطلب أدوات" in messages[-1]["content"]
-        for chunk in ["ده ", "ملخص ", "درجات الحرارة لآخر أسبوع."]:
-            yield chunk
 
 
 class FakeStreamingReNileClient:
@@ -300,9 +292,8 @@ async def test_run_stream_supports_multiple_tool_rounds_for_device_selection_fol
 
     chunks = [chunk async for chunk in result.chunks]
 
-    assert chunks == ["ده ", "ملخص ", "درجات الحرارة لآخر أسبوع."]
+    assert chunks == ["ده ملخص درجات الحرارة لآخر أسبوع."]
     assert llm.calls == 3
     assert llm.message_counts == [4, 6, 8]
-    assert llm.stream_message_counts == [10]
     assert renile_client.summary_device_id == "device-7"
     assert [context.tool_name for context in result.tool_contexts] == ["get_devices_ids", "get_last_duration_summary"]
