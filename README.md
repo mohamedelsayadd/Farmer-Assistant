@@ -108,7 +108,7 @@ Expected response:
 
 ### `POST /api/v1/chat`
 
-Request body:
+Text request body:
 
 ```json
 {
@@ -117,6 +117,16 @@ Request body:
   "message": "آخر قراءات المزرعة إيه؟"
 }
 ```
+
+Voice requests use the same endpoint with `multipart/form-data`:
+
+```text
+jwt=<renile-jwt>
+conversation_id=conversation-123
+wav_file=@voice.wav
+```
+
+Send exactly one user input per request: either `message` or `wav_file`, not both. WAV audio is transcribed with the configured faster-whisper model, then the transcribed text follows the same chat flow as a typed message.
 
 Response body:
 

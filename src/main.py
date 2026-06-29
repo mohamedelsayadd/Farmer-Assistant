@@ -12,6 +12,7 @@ from memory.redis_memory import RedisMemory
 from memory.tool_cache import ToolCache
 from providers.llm import LLMProvider
 from providers.renile_client import ReNileClient
+from providers.speech_to_text import SpeechToTextProvider
 from services.chat_service import ChatService
 
 
@@ -32,8 +33,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     )
     llm = LLMProvider(settings)
     renile_client = ReNileClient(settings)
+    speech_to_text = SpeechToTextProvider(settings)
     app.state.redis = redis
     app.state.tool_cache_redis = tool_cache_redis
+    app.state.speech_to_text = speech_to_text
+    app.state.stt_max_audio_bytes = settings.stt_max_audio_bytes
     tool_cache = ToolCache(redis=tool_cache_redis, ttl_seconds=settings.redis_tool_cache_ttl_seconds)
     app.state.chat_service = ChatService(memory=memory, agent=FarmerAssistantAgent(llm, renile_client, tool_cache))
 
