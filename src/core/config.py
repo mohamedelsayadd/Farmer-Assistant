@@ -42,6 +42,12 @@ class Settings(BaseSettings):
     stt_language: str | None = Field(default="ar", alias="STT_LANGUAGE")
     stt_max_audio_bytes: int = Field(default=10 * 1024 * 1024, alias="STT_MAX_AUDIO_BYTES", gt=0)
 
+    tts_model: str = Field(default="k2-fsa/OmniVoice", alias="TTS_MODEL")
+    tts_device_map: str = Field(default="cuda:0", alias="TTS_DEVICE_MAP")
+    tts_dtype: str = Field(default="float16", alias="TTS_DTYPE")
+    tts_sample_rate: int = Field(default=24000, alias="TTS_SAMPLE_RATE", gt=0)
+    tts_reference_audio_path: str = Field(default="./3.wav", alias="TTS_REFERENCE_AUDIO_PATH")
+
 
 @lru_cache
 def get_settings() -> Settings:

@@ -1,3 +1,4 @@
+import base64
 import os
 from uuid import uuid4
 
@@ -20,7 +21,7 @@ def reset_conversation() -> None:
     st.session_state.messages = []
 
 
-def send_chat_message(api_base_url: str, jwt: str, conversation_id: str, message: str) -> str:
+def send_chat_message(api_base_url: str, jwt: str, conversation_id: str, message: str) -> dict:
     endpoint = f"{api_base_url.rstrip('/')}/api/v1/chat"
     payload = {
         "jwt": jwt,
@@ -30,7 +31,20 @@ def send_chat_message(api_base_url: str, jwt: str, conversation_id: str, message
     with httpx.Client(timeout=120.0) as client:
         response = client.post(endpoint, json=payload)
         response.raise_for_status()
-        return response.json()["message"]
+        return response.json()
+
+
+def send_voice_message(api_base_url: str, jwt: str, conversation_id: str, wav_bytes: bytes) -> dict:
+    endpoint = f"{api_base_url.rstrip('/')}/api/v1/chat"
+    data = {
+        "jwt": jwt,
+        "conversation_id": conversation_id,
+    }
+    files = {"wav_file": ("voice.wav", wav_bytes, "audio/wav")}
+    with httpx.Client(timeout=240.0) as client:
+        response = client.post(endpoint, data=data, files=files)
+        response.raise_for_status()
+        return response.json()
 
 
 def render_sidebar() -> tuple[str, str, str]:
@@ -54,6 +68,9 @@ def render_chat_history() -> None:
     for message in st.session_state.messages:
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
+            audio_bytes = message.get("audio_bytes")
+            if audio_bytes:
+                st.audio(audio_bytes, format="audio/wav")
 
 
 def main() -> None:
@@ -66,35 +83,55 @@ def main() -> None:
     api_base_url, jwt, conversation_id = render_sidebar()
     render_chat_history()
 
+    voice_input = st.audio_input("Record a voice message")
     user_message = st.chat_input("اكتب رسالة للمساعد...")
-    if not user_message:
+    if not user_message and voice_input is None:
         return
 
     if not jwt.strip():
         st.error("Please enter a JWT in the sidebar before sending a message.")
         return
 
-    st.session_state.messages.append({"role": "user", "content": user_message})
+    is_voice_message = voice_input is not None
+    display_message = "Voice message" if is_voice_message else user_message
+    st.session_state.messages.append({"role": "user", "content": display_message})
     with st.chat_message("user"):
-        st.markdown(user_message)
+        st.markdown(display_message)
+        if is_voice_message:
+            st.audio(voice_input.getvalue(), format="audio/wav")
 
     with st.chat_message("assistant"):
         try:
-            assistant_message = send_chat_message(
-                api_base_url=api_base_url,
-                jwt=jwt,
-                conversation_id=conversation_id,
-                message=user_message,
-            )
+            if is_voice_message:
+                payload = send_voice_message(
+                    api_base_url=api_base_url,
+                    jwt=jwt,
+                    conversation_id=conversation_id,
+                    wav_bytes=voice_input.getvalue(),
+                )
+            else:
+                payload = send_chat_message(
+                    api_base_url=api_base_url,
+                    jwt=jwt,
+                    conversation_id=conversation_id,
+                    message=user_message,
+                )
+            assistant_message = payload["message"]
             st.markdown(assistant_message)
+            audio_wav_base64 = payload.get("audio_wav_base64")
+            assistant_audio = base64.b64decode(audio_wav_base64) if audio_wav_base64 else None
+            if assistant_audio:
+                st.audio(assistant_audio, format=payload.get("audio_content_type", "audio/wav"))
         except httpx.HTTPStatusError as exc:
             assistant_message = f"Backend returned {exc.response.status_code}: {exc.response.text}"
+            assistant_audio = None
             st.error(assistant_message)
         except httpx.HTTPError as exc:
             assistant_message = f"Could not reach backend: {exc}"
+            assistant_audio = None
             st.error(assistant_message)
 
-    st.session_state.messages.append({"role": "assistant", "content": assistant_message})
+    st.session_state.messages.append({"role": "assistant", "content": assistant_message, "audio_bytes": assistant_audio})
 
 
 if __name__ == "__main__":

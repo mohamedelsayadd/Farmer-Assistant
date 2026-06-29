@@ -17,6 +17,7 @@ The assistant is prompted to answer in simple Egyptian Arabic and can help with:
 - OpenAI SDK against an OpenAI-compatible LLM server
 - Redis for short-term memory
 - HTTPX for ReNile API calls
+- Faster Whisper for speech-to-text and OmniVoice for cloned voice replies
 - Streamlit manual testing client
 - pytest test suite
 
@@ -128,14 +129,20 @@ wav_file=@voice.wav
 
 Send exactly one user input per request: either `message` or `wav_file`, not both. WAV audio is transcribed with the configured faster-whisper model, then the transcribed text follows the same chat flow as a typed message.
 
+When the input is voice, the backend also tries to synthesize the assistant reply with OmniVoice using `TTS_REFERENCE_AUDIO_PATH` as the fixed voice-clone reference sample. If TTS fails, the API logs a warning and returns the text response only.
+
 Response body:
 
 ```json
 {
   "conversation_id": "conversation-123",
-  "message": "..."
+  "message": "...",
+  "audio_wav_base64": "...",
+  "audio_content_type": "audio/wav"
 }
 ```
+
+The audio fields are included only for successful voice replies.
 
 The JWT is required by the backend to call ReNile APIs. It is not exposed to the LLM tool schemas, prompts, memory, or logs.
 

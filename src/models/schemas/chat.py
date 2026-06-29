@@ -10,3 +10,5 @@ class ChatRequest(BaseModel):
 class ChatResponse(BaseModel):
     conversation_id: str
     message: str
+    audio_wav_base64: str | None = None
+    audio_content_type: str | None = None

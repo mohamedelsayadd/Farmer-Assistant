@@ -16,6 +16,9 @@ dependencies = [
     "transformers>=5.10.2",
     "torch>=2.12.0",
     "streamlit>=1.58.0",
+    "omnivoice>=0.1.5",
+    "torchaudio>=2.11.0",
+    "soundfile>=0.14.0",
 ]
 
 [dependency-groups]
