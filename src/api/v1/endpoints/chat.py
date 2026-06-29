@@ -6,16 +6,9 @@ from pydantic import ValidationError
 from starlette.datastructures import UploadFile
 
 from models.schemas.chat import ChatRequest, ChatResponse
-from providers.speech_to_text import SpeechToTextError
+from services.wav_processor import transcribe_wav_file
 
 router = APIRouter(prefix="/api/v1", tags=["chat"])
-
-
-def _is_wav_file(file: UploadFile) -> bool:
-    filename = (file.filename or "").lower()
-    content_type = (file.content_type or "").lower()
-    return filename.endswith(".wav") or content_type in {"audio/wav", "audio/wave", "audio/x-wav"}
-
 
 @router.post("/chat", response_model=ChatResponse)
 async def chat(request: Request) -> ChatResponse:
@@ -50,7 +43,7 @@ async def _parse_form_chat_request(request: Request) -> ChatRequest:
         raise HTTPException(status_code=422, detail="Send exactly one of message or wav_file.")
 
     if has_audio:
-        message = await _transcribe_wav_file(request, wav_file)
+        message = await transcribe_wav_file(request, wav_file)
 
     return _validate_chat_request({"jwt": jwt, "conversation_id": conversation_id, "message": message or ""})
 
@@ -67,24 +60,3 @@ def _get_form_str(form: Any, field_name: str) -> str:
     if isinstance(value, UploadFile):
         raise HTTPException(status_code=422, detail=f"{field_name} must be a text field.")
     return str(value or "")
-
-
-async def _transcribe_wav_file(request: Request, wav_file: UploadFile) -> str:
-    if not _is_wav_file(wav_file):
-        raise HTTPException(status_code=422, detail="wav_file must be a WAV audio file.")
-
-    audio_bytes = await wav_file.read()
-    max_audio_bytes = request.app.state.stt_max_audio_bytes
-    if len(audio_bytes) > max_audio_bytes:
-        raise HTTPException(status_code=413, detail="wav_file is too large.")
-    if not audio_bytes:
-        raise HTTPException(status_code=422, detail="wav_file must not be empty.")
-
-    try:
-        text = await request.app.state.speech_to_text.transcribe_wav(audio_bytes)
-    except SpeechToTextError as exc:
-        raise HTTPException(status_code=503, detail="Audio transcription failed. Try again later.") from exc
-
-    if not text.strip():
-        raise HTTPException(status_code=422, detail="Audio transcription returned empty text.")
-    return text
