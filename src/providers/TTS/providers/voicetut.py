@@ -74,6 +74,7 @@ class VoiceTutTextToSpeechProvider:
 
     def _get_model(self):
         if self._model is None:
+            _patch_transformers_compatibility()
             from voicetut_tts import VoiceTutTTS
 
             logger.info(
@@ -93,3 +94,14 @@ class VoiceTutTextToSpeechProvider:
             )
             logger.info("text_to_speech_model_loaded provider=voicetut model=%s", self._model_name)
         return self._model
+
+
+def _patch_transformers_compatibility() -> None:
+    import transformers
+
+    if hasattr(transformers, "AutoFeatureExtractor"):
+        return
+
+    from transformers.models.auto.feature_extraction_auto import AutoFeatureExtractor
+
+    transformers.AutoFeatureExtractor = AutoFeatureExtractor

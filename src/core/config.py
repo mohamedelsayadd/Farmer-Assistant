@@ -38,8 +38,8 @@ class Settings(BaseSettings):
 
     stt_provider: str = Field(default="faster_whisper", alias="STT_PROVIDER")
     stt_model: str = Field(default="Systran/faster-whisper-large-v3", alias="STT_MODEL")
-    stt_device: str = Field(default="cuda", alias="STT_DEVICE")
-    stt_compute_type: str = Field(default="float16", alias="STT_COMPUTE_TYPE")
+    stt_device: str = Field(default="cpu", alias="STT_DEVICE")
+    stt_compute_type: str = Field(default="int8", alias="STT_COMPUTE_TYPE")
     stt_language: str | None = Field(default="ar", alias="STT_LANGUAGE")
     stt_max_audio_bytes: int = Field(default=10 * 1024 * 1024, alias="STT_MAX_AUDIO_BYTES", gt=0)
 
