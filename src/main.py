@@ -1,3 +1,4 @@
+import asyncio
 from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
@@ -10,10 +11,10 @@ from core.config import get_settings
 from core.logging import configure_logging
 from memory.redis_memory import RedisMemory
 from memory.tool_cache import ToolCache
+from providers.STT.factory import create_speech_to_text_provider
+from providers.TTS.factory import create_text_to_speech_provider
 from providers.llm import LLMProvider
 from providers.renile_client import ReNileClient
-from providers.speech_to_text import SpeechToTextProvider
-from providers.text_to_speech import TextToSpeechProvider
 from services.chat_service import ChatService
 
 
@@ -34,8 +35,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     )
     llm = LLMProvider(settings)
     renile_client = ReNileClient(settings)
-    speech_to_text = SpeechToTextProvider(settings)
-    text_to_speech = TextToSpeechProvider(settings)
+    speech_to_text = create_speech_to_text_provider(settings)
+    text_to_speech = create_text_to_speech_provider(settings)
+    await asyncio.gather(speech_to_text.load_model(), text_to_speech.load_model())
+
     app.state.redis = redis
     app.state.tool_cache_redis = tool_cache_redis
     app.state.speech_to_text = speech_to_text

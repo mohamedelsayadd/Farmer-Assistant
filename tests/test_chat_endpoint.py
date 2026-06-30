@@ -3,8 +3,8 @@ from fastapi.testclient import TestClient
 
 from api.v1.endpoints.chat import router
 from models.schemas.chat import ChatRequest, ChatResponse
-from providers.speech_to_text import SpeechToTextError
-from providers.text_to_speech import TextToSpeechError
+from providers.STT.interface import SpeechToTextError
+from providers.TTS.interface import TextToSpeechError
 
 
 class FakeChatService:

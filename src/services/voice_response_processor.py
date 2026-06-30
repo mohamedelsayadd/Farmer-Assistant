@@ -4,7 +4,7 @@ import logging
 from fastapi import Request
 
 from models.schemas.chat import ChatResponse
-from providers.text_to_speech import TextToSpeechError
+from providers.TTS.interface import TextToSpeechError
 
 logger = logging.getLogger(__name__)
 

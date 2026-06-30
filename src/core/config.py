@@ -36,17 +36,21 @@ class Settings(BaseSettings):
 
     http_timeout_seconds: float = Field(alias="HTTP_TIMEOUT_SECONDS", gt=0)
 
+    stt_provider: str = Field(default="faster_whisper", alias="STT_PROVIDER")
     stt_model: str = Field(default="Systran/faster-whisper-large-v3", alias="STT_MODEL")
-    stt_device: str = Field(default="cpu", alias="STT_DEVICE")
-    stt_compute_type: str = Field(default="int8", alias="STT_COMPUTE_TYPE")
+    stt_device: str = Field(default="cuda", alias="STT_DEVICE")
+    stt_compute_type: str = Field(default="float16", alias="STT_COMPUTE_TYPE")
     stt_language: str | None = Field(default="ar", alias="STT_LANGUAGE")
     stt_max_audio_bytes: int = Field(default=10 * 1024 * 1024, alias="STT_MAX_AUDIO_BYTES", gt=0)
 
-    tts_model: str = Field(default="k2-fsa/OmniVoice", alias="TTS_MODEL")
-    tts_device_map: str = Field(default="cuda:0", alias="TTS_DEVICE_MAP")
+    tts_provider: str = Field(default="voicetut", alias="TTS_PROVIDER")
+    tts_model: str = Field(default="mohammedaly22/VoiceTut-TTS", alias="TTS_MODEL")
+    tts_device: str = Field(default="cuda:0", alias="TTS_DEVICE")
     tts_dtype: str = Field(default="float16", alias="TTS_DTYPE")
-    tts_sample_rate: int = Field(default=24000, alias="TTS_SAMPLE_RATE", gt=0)
-    tts_reference_audio_path: str = Field(default="./3.wav", alias="TTS_REFERENCE_AUDIO_PATH")
+    tts_speaker: str = Field(default="Asmaa", alias="TTS_SPEAKER")
+    tts_num_step: int = Field(default=48, alias="TTS_NUM_STEP", gt=0)
+    tts_guidance_scale: float = Field(default=2.5, alias="TTS_GUIDANCE_SCALE", gt=0)
+    tts_speed: float = Field(default=1.05, alias="TTS_SPEED", gt=0)
 
 
 @lru_cache

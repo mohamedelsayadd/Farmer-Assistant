@@ -1,7 +1,7 @@
 from fastapi import HTTPException, Request
 from starlette.datastructures import UploadFile
 
-from providers.speech_to_text import SpeechToTextError
+from providers.STT.interface import SpeechToTextError
 
 
 def is_wav_file(file: UploadFile) -> bool:
