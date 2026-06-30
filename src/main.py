@@ -22,8 +22,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings = get_settings()
     configure_logging(settings.log_level)
 
+    # prepare redis clients
     redis = Redis.from_url(settings.redis_url, decode_responses=False)
     tool_cache_redis = Redis.from_url(settings.redis_tool_cache_url, decode_responses=False)
+    # connect to redis and check if it's alive
     await redis.ping()
     await tool_cache_redis.ping()
 
