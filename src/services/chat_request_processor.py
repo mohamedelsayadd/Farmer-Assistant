@@ -38,7 +38,7 @@ async def parse_form_chat_request(request: Request) -> tuple[ChatRequest, bool]:
     if has_audio:
         message = await transcribe_wav_file(request, wav_file)
 
-    return validate_chat_request({"jwt": jwt, "conversation_id": conversation_id, "message": message or ""}), has_audio
+    return validate_chat_request({"jwt": jwt, "conversation_id": conversation_id, "message": message or ""}), False #has_audio
 
 
 def validate_chat_request(payload: dict[str, Any]) -> ChatRequest:
