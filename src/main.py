@@ -39,7 +39,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     renile_client = ReNileClient(settings)
     speech_to_text = create_speech_to_text_provider(settings)
     text_to_speech = create_text_to_speech_provider(settings)
-    await asyncio.gather(speech_to_text.load_model(), text_to_speech.load_model())
+    await speech_to_text.load_model()
+   #await asyncio.gather(speech_to_text.load_model(), text_to_speech.load_model())
 
     app.state.redis = redis
     app.state.tool_cache_redis = tool_cache_redis
