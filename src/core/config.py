@@ -5,6 +5,13 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
+    """Application settings.
+
+    `.env` is the single source of truth: every field below is required and has
+    no in-code default, so a missing key fails fast at startup instead of
+    silently falling back to a value hidden in this file.
+    """
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
@@ -18,17 +25,17 @@ class Settings(BaseSettings):
     llm_api_key: str = Field(alias="LLM_API_KEY")
     llm_base_url: str = Field(alias="LLM_BASE_URL")
     llm_model: str = Field(alias="LLM_MODEL")
-    llm_enable_thinking: bool = Field(default=False, alias="LLM_ENABLE_THINKING")
-    llm_temperature: float = Field(default=0.2, alias="LLM_TEMPERATURE", ge=0, le=2)
-    llm_max_tokens: int = Field(default=1024, alias="LLM_MAX_TOKENS", gt=0)
-    llm_top_p: float = Field(default=0.8, alias="LLM_TOP_P", gt=0, le=1)
-    llm_top_k: int = Field(default=20, alias="LLM_TOP_K", gt=0)
+    llm_enable_thinking: bool = Field(alias="LLM_ENABLE_THINKING")
+    llm_temperature: float = Field(alias="LLM_TEMPERATURE", ge=0, le=2)
+    llm_max_tokens: int = Field(alias="LLM_MAX_TOKENS", gt=0)
+    llm_top_p: float = Field(alias="LLM_TOP_P", gt=0, le=1)
+    llm_top_k: int = Field(alias="LLM_TOP_K", gt=0)
 
     redis_url: str = Field(alias="REDIS_URL")
     redis_memory_ttl_seconds: int = Field(alias="REDIS_MEMORY_TTL_SECONDS", gt=0)
     redis_memory_max_messages: int = Field(alias="REDIS_MEMORY_MAX_MESSAGES", gt=0)
-    redis_tool_cache_url: str = Field(default="redis://localhost:6379/1", alias="REDIS_TOOL_CACHE_URL")
-    redis_tool_cache_ttl_seconds: int = Field(default=3600, alias="REDIS_TOOL_CACHE_TTL_SECONDS", gt=0)
+    redis_tool_cache_url: str = Field(alias="REDIS_TOOL_CACHE_URL")
+    redis_tool_cache_ttl_seconds: int = Field(alias="REDIS_TOOL_CACHE_TTL_SECONDS", gt=0)
 
     renile_api_base_url: str = Field(alias="RENILE_API_BASE_URL")
     renile_current_readings_path: str = Field(alias="RENILE_CURRENT_READINGS_PATH")
@@ -36,21 +43,21 @@ class Settings(BaseSettings):
 
     http_timeout_seconds: float = Field(alias="HTTP_TIMEOUT_SECONDS", gt=0)
 
-    stt_provider: str = Field(default="faster_whisper", alias="STT_PROVIDER")
-    stt_model: str = Field(default="Systran/faster-whisper-large-v3", alias="STT_MODEL")
-    stt_device: str = Field(default="cpu", alias="STT_DEVICE")
-    stt_compute_type: str = Field(default="int8", alias="STT_COMPUTE_TYPE")
-    stt_language: str | None = Field(default="ar", alias="STT_LANGUAGE")
-    stt_max_audio_bytes: int = Field(default=10 * 1024 * 1024, alias="STT_MAX_AUDIO_BYTES", gt=0)
+    stt_provider: str = Field(alias="STT_PROVIDER")
+    stt_model: str = Field(alias="STT_MODEL")
+    stt_device: str = Field(alias="STT_DEVICE")
+    stt_compute_type: str = Field(alias="STT_COMPUTE_TYPE")
+    stt_language: str | None = Field(alias="STT_LANGUAGE")
+    stt_max_audio_bytes: int = Field(alias="STT_MAX_AUDIO_BYTES", gt=0)
 
-    tts_provider: str = Field(default="voicetut", alias="TTS_PROVIDER")
-    tts_model: str = Field(default="mohammedaly22/VoiceTut-TTS", alias="TTS_MODEL")
-    tts_device: str = Field(default="cuda:0", alias="TTS_DEVICE")
-    tts_dtype: str = Field(default="float16", alias="TTS_DTYPE")
-    tts_speaker: str = Field(default="Asmaa", alias="TTS_SPEAKER")
-    tts_num_step: int = Field(default=48, alias="TTS_NUM_STEP", gt=0)
-    tts_guidance_scale: float = Field(default=2.5, alias="TTS_GUIDANCE_SCALE", gt=0)
-    tts_speed: float = Field(default=1.05, alias="TTS_SPEED", gt=0)
+    tts_provider: str = Field(alias="TTS_PROVIDER")
+    tts_model: str = Field(alias="TTS_MODEL")
+    tts_device: str = Field(alias="TTS_DEVICE")
+    tts_dtype: str = Field(alias="TTS_DTYPE")
+    tts_speaker: str = Field(alias="TTS_SPEAKER")
+    tts_num_step: int = Field(alias="TTS_NUM_STEP", gt=0)
+    tts_guidance_scale: float = Field(alias="TTS_GUIDANCE_SCALE", gt=0)
+    tts_speed: float = Field(alias="TTS_SPEED", gt=0)
 
 
 @lru_cache

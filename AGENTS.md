@@ -10,6 +10,7 @@
 
 ## Runtime Setup
 - Settings load from root `.env` via `pydantic-settings`; `.env.example` is the verified list of env names. Keep real secrets only in `.env`.
+- `.env` is the single source of truth: `src/core/config.py` declares no in-code defaults, so every key in `.env.example` is required and a missing one fails validation at startup. Add a new setting to `.env` and `.env.example` in the same change as the `Settings` field.
 - Required external services for live API use: Redis, an OpenAI-compatible LLM endpoint from `LLM_BASE_URL`, and ReNile API access/JWT.
 - Streamlit defaults to `CHAT_API_BASE_URL` or `http://localhost:8001`; `.env.example` uses `http://localhost:8000`, so verify the sidebar URL.
 
