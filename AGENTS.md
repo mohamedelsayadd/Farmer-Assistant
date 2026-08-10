@@ -26,7 +26,7 @@
 - Historical flows must call `get_devices_ids` before reading tools; historical tools require a real `device_id` resolved from the device list, never a device name.
 - `get_last_duration_summary` calls ReNile `/api/v1/data/` with backend-fixed `data_type=month` and returns daily rows.
 - `get_specific_time_readings` calls the same endpoint with backend-fixed `data_type=day` and returns hourly rows.
-- `get_current_readings` and `get_devices_ids` both call `/api/users/devices/` but use different processors.
+- `get_devices_ids` calls `RENILE_DEVICES_PATH` (`/api/users/devices/`) and returns a bare array of `{_id, name}`; `get_current_readings` calls `RENILE_CURRENT_READINGS_PATH` (`/api/users/reads`) and returns a `{project_name, generated_at, devices[]}` object. The backend returns both already cleaned, so they are passed to the agent unchanged — do not add client-side processing for them.
 - Agent orchestration uses regular LLM chat calls and supports bounded multi-tool historical follow-ups covered in `tests/test_agent_graph_routing.py`.
 
 ## Memory And Cache
@@ -44,5 +44,5 @@
 - Tool schema changes: update `tests/test_tools.py` because it asserts no JWT or backend-fixed `data_type` exposure.
 - Graph routing or tool orchestration changes: update `tests/test_agent_graph_routing.py`.
 - Prompt/date/language/scope changes: update `tests/test_agent_memory_context.py`.
-- Response processor changes: update the matching processor tests under `tests/`.
+- Historical response processor changes (`src/services/historical_summary_processor.py`, now the only processor): update `tests/test_historical_summary_processor.py`.
 - Existing tests use fakes and should not require live Redis, LLM, or ReNile APIs.

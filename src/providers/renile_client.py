@@ -12,26 +12,23 @@ logger = logging.getLogger(__name__)
 class ReNileClient:
     def __init__(self, settings: Settings) -> None:
         self._base_url = settings.renile_api_base_url
+        self._devices_path = settings.renile_devices_path
         self._current_path = settings.renile_current_readings_path
         self._historical_path = settings.renile_historical_readings_path
         self._timeout = settings.http_timeout_seconds
 
-    async def get_current_readings(self, jwt: str) -> list[dict[str, Any]]:
+    async def get_current_readings(self, jwt: str) -> dict[str, Any]:
+        # The backend returns this already cleaned; pass it through untouched.
         logger.info("renile_current_readings_started path=%s", self._current_path)
         response = await self._get(self._current_path, jwt, {})
-        if not isinstance(response, list):
-            logger.error("renile_current_readings_invalid_shape response_type=%s", type(response).__name__)
-            raise ValueError("Unexpected current readings response shape")
-        logger.info("renile_current_readings_completed devices=%s", len(response))
+        logger.info("renile_current_readings_completed")
         return response
 
     async def get_devices_ids(self, jwt: str) -> list[dict[str, Any]]:
-        logger.info("renile_devices_ids_started path=%s", self._current_path)
-        response = await self._get(self._current_path, jwt, {})
-        if not isinstance(response, list):
-            logger.error("renile_devices_ids_invalid_shape response_type=%s", type(response).__name__)
-            raise ValueError("Unexpected devices IDs response shape")
-        logger.info("renile_devices_ids_completed devices=%s", len(response))
+        # The backend returns this already cleaned; pass it through untouched.
+        logger.info("renile_devices_ids_started path=%s", self._devices_path)
+        response = await self._get(self._devices_path, jwt, {})
+        logger.info("renile_devices_ids_completed")
         return response
 
     async def get_historical_readings(self, jwt: str, params: dict[str, Any]) -> dict[str, Any]:

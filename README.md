@@ -166,8 +166,8 @@ The tester calls `POST /api/v1/chat` and keeps display history locally.
 
 The LLM can request backend-executed tools for farm data:
 
-- `get_current_readings`: gets latest device readings from ReNile.
-- `get_devices_ids`: discovers the user's available devices before historical queries.
+- `get_current_readings`: gets latest device readings from ReNile `RENILE_CURRENT_READINGS_PATH`. The backend returns this already cleaned, so the result is passed to the agent unchanged.
+- `get_devices_ids`: discovers the user's available devices before historical queries, from `RENILE_DEVICES_PATH`. Returns a bare array of `{_id, name}`, also passed through unchanged.
 - `get_last_duration_summary`: gets daily historical rows for a selected device and period.
 - `get_specific_time_readings`: gets hourly readings for a selected device on a specific day/time.
 
@@ -214,5 +214,5 @@ uv run python -m py_compile streamlit_app.py
 
 - Settings are loaded from root `.env` using `pydantic-settings`.
 - Redis must be reachable at API startup because the FastAPI lifespan pings Redis.
-- ReNile API paths are configured through `RENILE_CURRENT_READINGS_PATH` and `RENILE_HISTORICAL_READINGS_PATH`.
+- ReNile API paths are configured through `RENILE_DEVICES_PATH`, `RENILE_CURRENT_READINGS_PATH`, and `RENILE_HISTORICAL_READINGS_PATH`.
 - The assistant must answer in simple Egyptian Arabic according to `src/agent/prompts.py`.

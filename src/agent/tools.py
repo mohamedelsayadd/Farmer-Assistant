@@ -3,11 +3,11 @@ from typing import Any
 
 from core.logging import json_preview
 from providers.renile_client import ReNileClient
-from services.current_readings_processor import process_current_readings
-from services.devices_ids_processor import process_devices_ids
 from services.historical_summary_processor import process_daily_sensor_response, process_hourly_sensor_response
 
 logger = logging.getLogger(__name__)
+
+ToolResult = dict[str, Any] | list[dict[str, Any]]
 
 
 OPENAI_TOOLS: list[dict[str, Any]] = [
@@ -86,27 +86,15 @@ OPENAI_TOOLS: list[dict[str, Any]] = [
 
 async def execute_current_readings_tool(jwt: str, renile_client: ReNileClient) -> dict[str, Any]:
     logger.info("tool_current_readings_started")
-    raw_devices = await renile_client.get_current_readings(jwt)
-    processed_readings = process_current_readings(raw_devices)
-    logger.info(
-        "tool_current_readings_completed raw_devices=%s processed_devices=%s result_preview=%s",
-        len(raw_devices),
-        len(processed_readings["devices"]),
-        json_preview(processed_readings),
-    )
-    return processed_readings
+    current_readings = await renile_client.get_current_readings(jwt)
+    logger.info("tool_current_readings_completed result_preview=%s", json_preview(current_readings))
+    return current_readings
 
 
-async def execute_devices_ids_tool(jwt: str, renile_client: ReNileClient) -> dict[str, Any]:
+async def execute_devices_ids_tool(jwt: str, renile_client: ReNileClient) -> list[dict[str, Any]]:
     logger.info("tool_devices_ids_started")
-    raw_devices = await renile_client.get_devices_ids(jwt)
-    devices_ids = process_devices_ids(raw_devices)
-    logger.info(
-        "tool_devices_ids_completed raw_devices=%s processed_devices=%s result_preview=%s",
-        len(raw_devices),
-        len(devices_ids["devices"]),
-        json_preview(devices_ids),
-    )
+    devices_ids = await renile_client.get_devices_ids(jwt)
+    logger.info("tool_devices_ids_completed result_preview=%s", json_preview(devices_ids))
     return devices_ids
 
 
@@ -184,7 +172,7 @@ async def execute_tool(
     jwt: str,
     arguments: dict[str, Any],
     renile_client: ReNileClient,
-) -> dict[str, Any]:
+) -> ToolResult:
     logger.info("tool_dispatch_started tool_name=%s arguments=%s", name, json_preview(arguments))
     if name == "get_current_readings":
         tool_result = await execute_current_readings_tool(jwt=jwt, renile_client=renile_client)

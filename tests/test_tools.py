@@ -54,27 +54,40 @@ def test_specific_time_readings_tool_schema_is_safe() -> None:
     assert "jwt" not in str(readings_tool).lower()
 
 
+BACKEND_CURRENT_READINGS = {
+    "project_name": "Farm 1",
+    "generated_at": "2026-08-09T12:00:00Z",
+    "devices": [
+        {
+            "device_id": "device-1",
+            "device_name": "Device 1",
+            "readings": [
+                {
+                    "sensor": "Battery_level",
+                    "value": 99,
+                    "unit": "%",
+                    "lower_limit": 20,
+                    "upper_limit": 100,
+                    "status": "normal",
+                    "timestamp": "2026-06-19T10:00:00Z",
+                    "age_seconds": 143,
+                }
+            ],
+        }
+    ],
+}
+
+BACKEND_DEVICES_IDS = [{"_id": "device-1", "name": "Device 1"}]
+
+
 class FakeReNileClient:
-    async def get_current_readings(self, jwt: str) -> list[dict]:
+    async def get_current_readings(self, jwt: str) -> dict:
         assert jwt == "runtime-jwt"
-        return [
-            {
-                "name": "Device 1",
-                "_project": {"type": "Farm 1"},
-                "sensortypes": [],
-                "lastRead": [{"name": "Battery_level", "reading": 99, "createdAt": "2026-06-19T10:00:00Z"}],
-            }
-        ]
+        return BACKEND_CURRENT_READINGS
 
     async def get_devices_ids(self, jwt: str) -> list[dict]:
         assert jwt == "runtime-jwt"
-        return [
-            {
-                "name": "Device 1",
-                "id": "device-1",
-                "_project": {"type": "Farm 1"},
-            }
-        ]
+        return BACKEND_DEVICES_IDS
 
     async def get_last_duration_summary(self, jwt: str, device_id: str, start_time: str) -> dict:
         assert jwt == "runtime-jwt"
@@ -100,15 +113,13 @@ class FakeReNileClient:
 
 
 @pytest.mark.asyncio
-async def test_current_readings_tool_returns_processed_api_response() -> None:
-    processed_readings = await execute_current_readings_tool(
+async def test_current_readings_tool_returns_backend_response_unchanged() -> None:
+    current_readings = await execute_current_readings_tool(
         jwt="runtime-jwt",
         renile_client=FakeReNileClient(),  # type: ignore[arg-type]
     )
 
-    assert processed_readings["project_name"] == "Farm 1"
-    assert processed_readings["devices"][0]["device_name"] == "Device 1"
-    assert processed_readings["devices"][0]["readings"][0]["sensor"] == "Battery_level"
+    assert current_readings == BACKEND_CURRENT_READINGS
 
 
 @pytest.mark.asyncio
@@ -125,16 +136,13 @@ async def test_current_readings_tool_logs_do_not_include_jwt(caplog: pytest.LogC
 
 
 @pytest.mark.asyncio
-async def test_devices_ids_tool_returns_processed_api_response() -> None:
+async def test_devices_ids_tool_returns_backend_response_unchanged() -> None:
     devices_ids = await execute_devices_ids_tool(
         jwt="runtime-jwt",
         renile_client=FakeReNileClient(),  # type: ignore[arg-type]
     )
 
-    assert devices_ids == {
-        "project_name": "Farm 1",
-        "devices": [{"device_name": "Device 1", "device_id": "device-1"}],
-    }
+    assert devices_ids == BACKEND_DEVICES_IDS
 
 
 @pytest.mark.asyncio

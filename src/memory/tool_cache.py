@@ -13,7 +13,12 @@ class ToolCache:
         self._redis = redis
         self._ttl_seconds = ttl_seconds
 
-    async def get(self, conversation_id: str, tool_name: str, arguments: dict[str, Any]) -> dict[str, Any] | None:
+    async def get(
+        self,
+        conversation_id: str,
+        tool_name: str,
+        arguments: dict[str, Any],
+    ) -> dict[str, Any] | list[Any] | None:
         key = self._key(conversation_id, tool_name, arguments)
         raw_value = await self._redis.get(key)
         if raw_value is None:
@@ -38,14 +43,20 @@ class ToolCache:
             logger.warning("tool_cache_invalid_result_json conversation_id=%s tool_name=%s", conversation_id, tool_name)
             return None
 
-        if not isinstance(result, dict):
+        if not isinstance(result, (dict, list)):
             logger.warning("tool_cache_invalid_result_type conversation_id=%s tool_name=%s", conversation_id, tool_name)
             return None
 
         logger.info("tool_cache_hit conversation_id=%s tool_name=%s", conversation_id, tool_name)
         return result
 
-    async def set(self, conversation_id: str, tool_name: str, arguments: dict[str, Any], result: dict[str, Any]) -> None:
+    async def set(
+        self,
+        conversation_id: str,
+        tool_name: str,
+        arguments: dict[str, Any],
+        result: dict[str, Any] | list[Any],
+    ) -> None:
         key = self._key(conversation_id, tool_name, arguments)
         content = json.dumps(result, ensure_ascii=False)
         payload = json.dumps(

@@ -186,7 +186,7 @@ class FarmerAssistantAgent:
     @staticmethod
     def _successful_tool_result(
         tool_call: Any,
-        tool_result: dict[str, Any],
+        tool_result: Any,
         tool_name: str | None = None,
     ) -> tuple[dict[str, Any], ToolContext]:
         resolved_tool_name = tool_name or tool_call.function.name
@@ -206,22 +206,23 @@ class FarmerAssistantAgent:
         self,
         state: AgentState,
         arguments: dict[str, Any],
-    ) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    ) -> tuple[dict[str, Any], Any | None]:
         raw_device_id = str(arguments.get("device_id", "")).strip()
         devices_result = await self._cached_or_fresh_devices_result(state)
-        known_devices = devices_result.get("devices", [])
-        if not isinstance(known_devices, list):
+        # The devices tool result is the backend array itself. A dict here means a
+        # stale pre-passthrough cache entry, so fall back to showing the device list.
+        if not isinstance(devices_result, list):
             logger.warning("historical_device_resolution_invalid_cached_devices_result")
             return arguments, devices_result
 
-        resolved_device_id = self._resolve_device_id(raw_device_id, known_devices)
+        resolved_device_id = self._resolve_device_id(raw_device_id, devices_result)
         if resolved_device_id:
             return {**arguments, "device_id": resolved_device_id}, None
 
         logger.warning("historical_device_resolution_failed raw_device_id=%s", raw_device_id)
         return arguments, devices_result
 
-    async def _cached_or_fresh_devices_result(self, state: AgentState) -> dict[str, Any]:
+    async def _cached_or_fresh_devices_result(self, state: AgentState) -> Any:
         arguments: dict[str, Any] = {}
         cached_devices_result = await self._tool_cache.get(
             conversation_id=state["conversation_id"],
@@ -245,14 +246,16 @@ class FarmerAssistantAgent:
         if not raw_device_id:
             return None
         for device in devices:
-            device_id = str(device.get("device_id", "")).strip()
+            device_id = str(device.get("_id", "")).strip()
             if raw_device_id == device_id:
                 return device_id
 
+        # Enumerate the full array: the model numbers the list it was shown verbatim,
+        # so skipping entries here would shift indices against its numbering.
         lowered_raw_device_id = raw_device_id.casefold()
         for index, device in enumerate(devices, start=1):
-            device_name = str(device.get("device_name", "")).strip()
-            device_id = str(device.get("device_id", "")).strip()
+            device_name = str(device.get("name", "")).strip()
+            device_id = str(device.get("_id", "")).strip()
             if not device_id:
                 continue
             if raw_device_id == str(index) or lowered_raw_device_id == device_name.casefold():

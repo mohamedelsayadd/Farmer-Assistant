@@ -38,6 +38,7 @@ class Settings(BaseSettings):
     redis_tool_cache_ttl_seconds: int = Field(alias="REDIS_TOOL_CACHE_TTL_SECONDS", gt=0)
 
     renile_api_base_url: str = Field(alias="RENILE_API_BASE_URL")
+    renile_devices_path: str = Field(alias="RENILE_DEVICES_PATH")
     renile_current_readings_path: str = Field(alias="RENILE_CURRENT_READINGS_PATH")
     renile_historical_readings_path: str = Field(alias="RENILE_HISTORICAL_READINGS_PATH")
 

@@ -41,6 +41,28 @@ async def test_tool_cache_stores_and_loads_processed_result() -> None:
 
 
 @pytest.mark.asyncio
+async def test_tool_cache_stores_and_loads_list_result() -> None:
+    redis = FakeRedis()
+    cache = ToolCache(redis=redis, ttl_seconds=3600)  # type: ignore[arg-type]
+    devices = [{"_id": "device-1", "name": "Device 1"}]
+
+    await cache.set(
+        conversation_id="conversation-1",
+        tool_name="get_devices_ids",
+        arguments={},
+        result=devices,
+    )
+
+    result = await cache.get(
+        conversation_id="conversation-1",
+        tool_name="get_devices_ids",
+        arguments={},
+    )
+
+    assert result == devices
+
+
+@pytest.mark.asyncio
 async def test_tool_cache_key_includes_arguments_hash() -> None:
     redis = FakeRedis()
     cache = ToolCache(redis=redis, ttl_seconds=3600)  # type: ignore[arg-type]

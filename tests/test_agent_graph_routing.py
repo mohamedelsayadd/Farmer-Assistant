@@ -1,5 +1,6 @@
 import json
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
@@ -42,19 +43,38 @@ def _assistant_message(tool_name: str) -> SimpleNamespace:
     )
 
 
+BACKEND_DEVICES = [
+    {"_id": "63590cc1d39b8a2f99239130", "name": "Media Monitoring System"},
+    {"_id": "device-2", "name": "Local Climate monitoring system"},
+]
+
+
+def test_resolve_device_id_matches_exact_id() -> None:
+    assert FarmerAssistantAgent._resolve_device_id("device-2", BACKEND_DEVICES) == "device-2"  # noqa: SLF001
+
+
+def test_resolve_device_id_matches_one_based_index() -> None:
+    assert FarmerAssistantAgent._resolve_device_id("1", BACKEND_DEVICES) == "63590cc1d39b8a2f99239130"  # noqa: SLF001
+
+
+def test_resolve_device_id_matches_case_insensitive_name() -> None:
+    resolved = FarmerAssistantAgent._resolve_device_id("media MONITORING system", BACKEND_DEVICES)  # noqa: SLF001
+
+    assert resolved == "63590cc1d39b8a2f99239130"
+
+
+def test_resolve_device_id_returns_none_for_blank_and_unknown() -> None:
+    assert FarmerAssistantAgent._resolve_device_id("", BACKEND_DEVICES) is None  # noqa: SLF001
+    assert FarmerAssistantAgent._resolve_device_id("Unknown Device", BACKEND_DEVICES) is None  # noqa: SLF001
+
+
 class FakeReNileClient:
     def __init__(self) -> None:
         self.summary_device_id = None
 
     async def get_devices_ids(self, jwt: str) -> list[dict]:
         assert jwt == "runtime-jwt"
-        return [
-            {
-                "name": "Local Climate monitoring system",
-                "id": "device-2",
-                "_project": {"type": "Farm 1"},
-            }
-        ]
+        return [{"_id": "device-2", "name": "Local Climate monitoring system"}]
 
     async def get_last_duration_summary(self, jwt: str, device_id: str, start_time: str) -> dict:
         assert jwt == "runtime-jwt"
@@ -69,14 +89,14 @@ class FakeReNileClient:
 
 
 class FakeToolCache:
-    def __init__(self, cached_results: dict[tuple[str, str], dict] | None = None) -> None:
+    def __init__(self, cached_results: dict[tuple[str, str], Any] | None = None) -> None:
         self.cached_results = cached_results or {}
-        self.stored_results: list[tuple[str, str, dict, dict]] = []
+        self.stored_results: list[tuple[str, str, dict, Any]] = []
 
-    async def get(self, conversation_id: str, tool_name: str, arguments: dict) -> dict | None:
+    async def get(self, conversation_id: str, tool_name: str, arguments: dict) -> Any | None:
         return self.cached_results.get((tool_name, json.dumps(arguments, sort_keys=True)))
 
-    async def set(self, conversation_id: str, tool_name: str, arguments: dict, result: dict) -> None:
+    async def set(self, conversation_id: str, tool_name: str, arguments: dict, result: Any) -> None:
         self.stored_results.append((conversation_id, tool_name, arguments, result))
         self.cached_results[(tool_name, json.dumps(arguments, sort_keys=True))] = result
 
@@ -154,14 +174,7 @@ async def test_historical_tool_uses_cached_device_selection_number() -> None:
     renile_client = FakeReNileClient()
     tool_cache = FakeToolCache(
         {
-            ("get_devices_ids", "{}"): {
-                "devices": [
-                    {
-                        "device_name": "Local Climate monitoring system",
-                        "device_id": "device-2",
-                    }
-                ]
-            }
+            ("get_devices_ids", "{}"): [{"_id": "device-2", "name": "Local Climate monitoring system"}],
         }
     )
     agent = FarmerAssistantAgent(llm=SimpleNamespace(), renile_client=renile_client, tool_cache=tool_cache)  # type: ignore[arg-type]
@@ -198,9 +211,7 @@ async def test_tool_call_uses_cached_result_before_api_call() -> None:
                 "data_type": "month",
                 "daily_rows": [],
             },
-            ("get_devices_ids", "{}"): {
-                "devices": [{"device_name": "Local Climate monitoring system", "device_id": "device-2"}]
-            },
+            ("get_devices_ids", "{}"): [{"_id": "device-2", "name": "Local Climate monitoring system"}],
         }
     )
     agent = FarmerAssistantAgent(llm=SimpleNamespace(), renile_client=renile_client, tool_cache=tool_cache)  # type: ignore[arg-type]
@@ -252,11 +263,8 @@ class FakeMultiRoundReNileClient:
 
     async def get_devices_ids(self, jwt: str) -> list[dict]:
         assert jwt == "runtime-jwt"
-        return [
-            {"name": f"Device {index}", "id": f"device-{index}", "_project": {"type": "Paradise Farms"}}
-            for index in range(1, 7)
-        ] + [
-            {"name": "GreenHouse Control Unit", "id": "device-7", "_project": {"type": "Paradise Farms"}}
+        return [{"_id": f"device-{index}", "name": f"Device {index}"} for index in range(1, 7)] + [
+            {"_id": "device-7", "name": "GreenHouse Control Unit"}
         ]
 
     async def get_last_duration_summary(self, jwt: str, device_id: str, start_time: str) -> dict:
