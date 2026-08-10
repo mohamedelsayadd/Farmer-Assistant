@@ -12,11 +12,14 @@
 - Settings load from root `.env` via `pydantic-settings`; `.env.example` is the verified list of env names. Keep real secrets only in `.env`.
 - `.env` is the single source of truth: `src/core/config.py` declares no in-code defaults, so every key in `.env.example` is required and a missing one fails validation at startup. Add a new setting to `.env` and `.env.example` in the same change as the `Settings` field.
 - Required external services for live API use: Redis, an OpenAI-compatible LLM endpoint from `LLM_BASE_URL`, and ReNile API access/JWT.
+- The speech-to-text subsystem is named ASR throughout: package `src/providers/ASR/`, settings `asr_*`, env keys `ASR_*`, `app.state.asr`, and `asr_*` log events. Existing `.env` files must rename `STT_*` to `ASR_*` and add `ASR_DTYPE` and `ASR_MAX_NEW_TOKENS`, or startup fails validation.
+- `ASR_PROVIDER` selects the provider: `cohere` (local `CohereLabs/cohere-transcribe-arabic-07-2026` weights via `transformers`) or `faster_whisper`. `ASR_LANGUAGE` is required for `cohere`; the provider raises at construction when it is empty.
+- The Cohere weights come from a gated Hugging Face repo, so a token with accepted conditions must be available (`HF_TOKEN` or `hf auth login`) before the model loads at startup.
 - Streamlit defaults to `CHAT_API_BASE_URL` or `http://localhost:8001`; `.env.example` uses `http://localhost:8000`, so verify the sidebar URL.
 
 ## Entrypoints
 - FastAPI app: `src/main.py`; routes: `/health` and `POST /api/v1/chat`.
-- Chat request schema is `jwt`, `conversation_id`, `message`; response schema is `conversation_id`, `message`.
+- Chat request schema is `jwt`, `conversation_id`, `message`; response schema is `conversation_id`, `message`. Multipart requests may send `wav_file` instead of `message`, which is transcribed by the configured ASR provider.
 - `streamlit_app.py` calls only `POST /api/v1/chat` and keeps display history locally.
 
 ## Agent And Tools
@@ -45,4 +48,5 @@
 - Graph routing or tool orchestration changes: update `tests/test_agent_graph_routing.py`.
 - Prompt/date/language/scope changes: update `tests/test_agent_memory_context.py`.
 - Historical response processor changes (`src/services/historical_summary_processor.py`, now the only processor): update `tests/test_historical_summary_processor.py`.
+- ASR provider or factory changes (`src/providers/ASR/`): update `tests/test_asr_factory.py`; it builds `Settings` from a literal dict so it never needs a local `.env`, and it must not download models or touch a GPU.
 - Existing tests use fakes and should not require live Redis, LLM, or ReNile APIs.

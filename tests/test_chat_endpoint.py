@@ -3,7 +3,7 @@ from fastapi.testclient import TestClient
 
 from api.v1.endpoints.chat import router
 from models.schemas.chat import ChatRequest, ChatResponse
-from providers.STT.interface import SpeechToTextError
+from providers.ASR.interface import ASRError
 from providers.TTS.interface import TextToSpeechError
 
 
@@ -16,7 +16,7 @@ class FakeChatService:
         return ChatResponse(conversation_id=request.conversation_id, message=f"reply: {request.message}")
 
 
-class FakeSpeechToText:
+class FakeASR:
     def __init__(self, text: str = "درجة الحرارة كام؟", should_fail: bool = False) -> None:
         self._text = text
         self._should_fail = should_fail
@@ -24,7 +24,7 @@ class FakeSpeechToText:
     async def transcribe_wav(self, audio_bytes: bytes) -> str:
         assert audio_bytes == b"fake-wav"
         if self._should_fail:
-            raise SpeechToTextError("failed")
+            raise ASRError("failed")
         return self._text
 
 
@@ -42,7 +42,7 @@ class FakeTextToSpeech:
 
 
 def make_client(
-    speech_to_text: FakeSpeechToText | None = None,
+    asr: FakeASR | None = None,
     text_to_speech: FakeTextToSpeech | None = None,
 ) -> tuple[TestClient, FakeChatService, FakeTextToSpeech]:
     app = FastAPI()
@@ -50,9 +50,9 @@ def make_client(
     chat_service = FakeChatService()
     tts = text_to_speech or FakeTextToSpeech()
     app.state.chat_service = chat_service
-    app.state.speech_to_text = speech_to_text or FakeSpeechToText()
+    app.state.asr = asr or FakeASR()
     app.state.text_to_speech = tts
-    app.state.stt_max_audio_bytes = 1024
+    app.state.asr_max_audio_bytes = 1024
     return TestClient(app), chat_service, tts
 
 
@@ -182,7 +182,7 @@ def test_chat_endpoint_rejects_non_wav_audio() -> None:
 
 
 def test_chat_endpoint_rejects_empty_transcription() -> None:
-    client, _, _ = make_client(speech_to_text=FakeSpeechToText(text=""))
+    client, _, _ = make_client(asr=FakeASR(text=""))
 
     response = client.post(
         "/api/v1/chat",
@@ -195,7 +195,7 @@ def test_chat_endpoint_rejects_empty_transcription() -> None:
 
 
 def test_chat_endpoint_returns_503_when_transcription_fails() -> None:
-    client, _, _ = make_client(speech_to_text=FakeSpeechToText(should_fail=True))
+    client, _, _ = make_client(asr=FakeASR(should_fail=True))
 
     response = client.post(
         "/api/v1/chat",

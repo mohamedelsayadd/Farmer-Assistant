@@ -11,7 +11,7 @@ from core.config import get_settings
 from core.logging import configure_logging
 from memory.redis_memory import RedisMemory
 from memory.tool_cache import ToolCache
-from providers.STT.factory import create_speech_to_text_provider
+from providers.ASR.factory import create_asr_provider
 from providers.TTS.factory import create_text_to_speech_provider
 from providers.llm import LLMProvider
 from providers.renile_client import ReNileClient
@@ -37,16 +37,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     )
     llm = LLMProvider(settings)
     renile_client = ReNileClient(settings)
-    speech_to_text = create_speech_to_text_provider(settings)
+    asr = create_asr_provider(settings)
     text_to_speech = create_text_to_speech_provider(settings)
-    await speech_to_text.load_model()
-   #await asyncio.gather(speech_to_text.load_model(), text_to_speech.load_model())
+    await asr.load_model()
+   #await asyncio.gather(asr.load_model(), text_to_speech.load_model())
 
     app.state.redis = redis
     app.state.tool_cache_redis = tool_cache_redis
-    app.state.speech_to_text = speech_to_text
+    app.state.asr = asr
     app.state.text_to_speech = text_to_speech
-    app.state.stt_max_audio_bytes = settings.stt_max_audio_bytes
+    app.state.asr_max_audio_bytes = settings.asr_max_audio_bytes
     tool_cache = ToolCache(redis=tool_cache_redis, ttl_seconds=settings.redis_tool_cache_ttl_seconds)
     app.state.chat_service = ChatService(memory=memory, agent=FarmerAssistantAgent(llm, renile_client, tool_cache))
 

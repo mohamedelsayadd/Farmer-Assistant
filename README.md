@@ -17,7 +17,7 @@ The assistant is prompted to answer in simple Egyptian Arabic and can help with:
 - OpenAI SDK against an OpenAI-compatible LLM server
 - Redis for short-term memory
 - HTTPX for ReNile API calls
-- Faster Whisper for speech-to-text and VoiceTut TTS for voice replies
+- Cohere Transcribe Arabic for speech recognition (ASR), with Faster Whisper as a fallback provider, and VoiceTut TTS for voice replies
 - Streamlit manual testing client
 - pytest test suite
 
@@ -127,7 +127,9 @@ conversation_id=conversation-123
 wav_file=@voice.wav
 ```
 
-Send exactly one user input per request: either `message` or `wav_file`, not both. WAV audio is transcribed with the configured STT provider, then the transcribed text follows the same chat flow as a typed message.
+Send exactly one user input per request: either `message` or `wav_file`, not both. WAV audio is transcribed with the configured ASR provider, then the transcribed text follows the same chat flow as a typed message.
+
+`ASR_PROVIDER` selects the transcription backend: `cohere` (default) runs the open weights of `CohereLabs/cohere-transcribe-arabic-07-2026` locally through `transformers`, and `faster_whisper` runs a CTranslate2 Whisper model. Configure model placement with `ASR_DEVICE` plus `ASR_DTYPE` (cohere) or `ASR_COMPUTE_TYPE` (faster-whisper), and cap upload size with `ASR_MAX_AUDIO_BYTES`. `ASR_LANGUAGE` is required for `cohere` — its processor builds the decoder prompt from the language code and has no auto-detection mode — while `faster_whisper` accepts an empty value to auto-detect. The Cohere weights live in a gated Hugging Face repo, so accept the conditions on the model page and make a Hugging Face token available (`HF_TOKEN` or `hf auth login`) before the first startup. Each transcription is logged as an `asr_completed` line that includes the transcribed text.
 
 When the input is voice, the backend also tries to synthesize the assistant reply with VoiceTut TTS. Configure the model placement with `TTS_DEVICE` and `TTS_DTYPE`, and configure the voice with `TTS_SPEAKER`, `TTS_NUM_STEP`, `TTS_GUIDANCE_SCALE`, and `TTS_SPEED`. If TTS fails, the API logs a warning and returns the text response only.
 
