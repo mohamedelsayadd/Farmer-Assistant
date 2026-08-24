@@ -48,6 +48,16 @@ def test_system_prompt_sets_response_language_and_blocks_pre_2026_readings() -> 
     assert "القراءات قبل 2026 غير متاحة." in system_prompt
 
 
+def test_system_prompt_answers_capability_help_question() -> None:
+    messages = FarmerAssistantAgent._build_messages(history=[], user_message="تقدر تساعدني ازاي؟")
+    system_prompt = messages[0]["content"]
+
+    assert 'If the user asks "تقدر تساعدني ازاي؟", reply exactly' in system_prompt
+    assert "أقدر أساعدك في حاجتين أساسيين:" in system_prompt
+    assert "تشخيص مشاكل النبات" in system_prompt
+    assert "قراءات المزرعة" in system_prompt
+
+
 def test_system_prompt_asks_for_clarification_on_unclear_follow_ups() -> None:
     messages = FarmerAssistantAgent._build_messages(history=[], user_message="كام؟")
     system_prompt = messages[0]["content"]
