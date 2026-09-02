@@ -12,13 +12,17 @@ from agent.tools import OPENAI_TOOLS, execute_devices_ids_tool, execute_tool
 from core.logging import json_preview
 from memory.redis_memory import MemoryMessage
 from memory.tool_cache import ToolCache
+from models.schemas.chat import UploadedImage
 from providers.llm import LLMProvider
+from providers.plant_disease_client import PlantDiseaseClient
 from providers.renile_client import ReNileClient
 
 logger = logging.getLogger(__name__)
 CURRENT_TOOL_NAMES = {"get_current_readings"}
 HISTORICAL_TOOL_NAMES = {"get_devices_ids", "get_last_duration_summary", "get_specific_time_readings"}
 HISTORICAL_READING_TOOL_NAMES = {"get_last_duration_summary", "get_specific_time_readings"}
+PLANT_DISEASE_TOOL_NAMES = {"plant_diseases_detection"}
+IMAGE_ATTACHMENT_MARKER = "[تم رفع صورة نبات مع الرسالة.]"
 MAX_TOOL_ROUNDS = 4
 FALLBACK_RESPONSE = "معلش، مش قادر أوصل لإجابة واضحة دلوقتي."
 
@@ -29,6 +33,7 @@ class AgentState(TypedDict):
     history: list[MemoryMessage]
     user_message: str
     messages: list[dict[str, Any]]
+    image: UploadedImage | None
     assistant_message: NotRequired[Any]
     tool_results: NotRequired[list[dict[str, Any]]]
     tool_contexts: NotRequired[list["ToolContext"]]
@@ -48,10 +53,17 @@ class AgentResult:
 
 
 class FarmerAssistantAgent:
-    def __init__(self, llm: LLMProvider, renile_client: ReNileClient, tool_cache: ToolCache) -> None:
+    def __init__(
+        self,
+        llm: LLMProvider,
+        renile_client: ReNileClient,
+        tool_cache: ToolCache,
+        plant_disease_client: PlantDiseaseClient | None = None,
+    ) -> None:
         self._llm = llm
         self._renile_client = renile_client
         self._tool_cache = tool_cache
+        self._plant_disease_client = plant_disease_client
 
     async def run(
         self,
@@ -59,6 +71,7 @@ class FarmerAssistantAgent:
         jwt: str,
         user_message: str,
         history: list[MemoryMessage],
+        image: UploadedImage | None = None,
     ) -> AgentResult:
         started_at = perf_counter()
         logger.info(
@@ -71,7 +84,8 @@ class FarmerAssistantAgent:
             "jwt": jwt,
             "history": history,
             "user_message": user_message,
-            "messages": self._build_messages(history, user_message),
+            "messages": self._build_messages(history, user_message, image),
+            "image": image,
         }
         tool_contexts: list[ToolContext] = []
         final_response = FALLBACK_RESPONSE
@@ -93,6 +107,8 @@ class FarmerAssistantAgent:
                 tool_update = await self._current_tools_node(state)
             elif tool_path == "historical_tools":
                 tool_update = await self._historical_tools_node(state)
+            elif tool_path == "plant_disease_tools":
+                tool_update = await self._plant_disease_tools_node(state)
             else:
                 final_response = assistant_message.content or FALLBACK_RESPONSE
                 break
@@ -129,6 +145,10 @@ class FarmerAssistantAgent:
         logger.info("historical_tools_node_started")
         return await self._execute_tool_calls(state, HISTORICAL_TOOL_NAMES)
 
+    async def _plant_disease_tools_node(self, state: AgentState) -> dict[str, Any]:
+        logger.info("plant_disease_tools_node_started")
+        return await self._execute_tool_calls(state, PLANT_DISEASE_TOOL_NAMES)
+
     async def _execute_tool_calls(self, state: AgentState, allowed_tool_names: set[str]) -> dict[str, Any]:
         assistant_message = state["assistant_message"]
         tool_results: list[dict[str, Any]] = []
@@ -158,6 +178,20 @@ class FarmerAssistantAgent:
                 if fallback_tool_result is not None:
                     return self._successful_tool_result(tool_call, fallback_tool_result, tool_name="get_devices_ids")
 
+            if tool_call.function.name in PLANT_DISEASE_TOOL_NAMES:
+                if state.get("image") is None:
+                    logger.warning("plant_disease_tool_missing_image tool_call_id=%s", tool_call.id)
+                    return self._failed_tool_result(tool_call), None
+                tool_result = await execute_tool(
+                    tool_call.function.name,
+                    jwt=state["jwt"],
+                    arguments=arguments,
+                    renile_client=self._renile_client,
+                    plant_disease_client=self._plant_disease_client,
+                    image=state["image"],
+                )
+                return self._successful_tool_result(tool_call, tool_result)
+
             cached_tool_result = await self._tool_cache.get(
                 conversation_id=state["conversation_id"],
                 tool_name=tool_call.function.name,
@@ -171,6 +205,7 @@ class FarmerAssistantAgent:
                 jwt=state["jwt"],
                 arguments=arguments,
                 renile_client=self._renile_client,
+                plant_disease_client=self._plant_disease_client,
             )
             await self._tool_cache.set(
                 conversation_id=state["conversation_id"],
@@ -304,15 +339,24 @@ class FarmerAssistantAgent:
         if tool_name in HISTORICAL_TOOL_NAMES:
             logger.info("tool_path_selected path=historical_tools tool_name=%s", tool_name)
             return "historical_tools"
+        if tool_name in PLANT_DISEASE_TOOL_NAMES:
+            logger.info("tool_path_selected path=plant_disease_tools tool_name=%s", tool_name)
+            return "plant_disease_tools"
         logger.warning("tool_path_selected path=final unknown_tool=%s", tool_name)
         return "final"
 
     @staticmethod
-    def _build_messages(history: list[MemoryMessage], user_message: str) -> list[dict[str, Any]]:
+    def _build_messages(
+        history: list[MemoryMessage],
+        user_message: str,
+        image: UploadedImage | None = None,
+    ) -> list[dict[str, Any]]:
         messages: list[dict[str, Any]] = [
             {"role": "system", "content": FarmerAssistantAgent._system_prompt(history)}
         ]
         messages.extend(FarmerAssistantAgent._history_message(message) for message in history)
+        if image is not None:
+            user_message = f"{user_message}\n\n{IMAGE_ATTACHMENT_MARKER}"
         messages.append({"role": "user", "content": user_message})
         return messages
 

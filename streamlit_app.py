@@ -47,6 +47,29 @@ def send_voice_message(api_base_url: str, jwt: str, conversation_id: str, wav_by
         return response.json()
 
 
+def send_image_message(
+    api_base_url: str,
+    jwt: str,
+    conversation_id: str,
+    image_bytes: bytes,
+    filename: str,
+    content_type: str | None,
+    message: str | None = None,
+) -> dict:
+    endpoint = f"{api_base_url.rstrip('/')}/api/v1/chat"
+    data = {
+        "jwt": jwt,
+        "conversation_id": conversation_id,
+    }
+    if message and message.strip():
+        data["message"] = message.strip()
+    files = {"image_file": (filename, image_bytes, content_type or "application/octet-stream")}
+    with httpx.Client(timeout=240.0) as client:
+        response = client.post(endpoint, data=data, files=files)
+        response.raise_for_status()
+        return response.json()
+
+
 def render_sidebar() -> tuple[str, str, str]:
     with st.sidebar:
         st.header("Test Settings")
@@ -71,6 +94,9 @@ def render_chat_history() -> None:
             audio_bytes = message.get("audio_bytes")
             if audio_bytes:
                 st.audio(audio_bytes, format="audio/wav")
+            image_bytes = message.get("image_bytes")
+            if image_bytes:
+                st.image(image_bytes)
 
 
 def main() -> None:
@@ -83,22 +109,36 @@ def main() -> None:
     api_base_url, jwt, conversation_id = render_sidebar()
     render_chat_history()
 
+    image_input = st.file_uploader("Upload a plant image", type=["jpg", "jpeg", "png", "webp"])
+    image_message = st.text_input("Optional message with image")
+    send_image = st.button("Analyze plant image", disabled=image_input is None)
     voice_input = st.audio_input("Record a voice message")
     user_message = st.chat_input("اكتب رسالة للمساعد...")
-    if not user_message and voice_input is None:
+    if not user_message and voice_input is None and not send_image:
         return
 
     if not jwt.strip():
         st.error("Please enter a JWT in the sidebar before sending a message.")
         return
 
+    if voice_input is not None and (bool(user_message) or send_image):
+        st.error("Please send voice separately from text or image.")
+        return
+    if user_message and image_input is not None and not send_image:
+        st.error("Click Analyze plant image to send text with the selected image.")
+        return
+
     is_voice_message = voice_input is not None
-    display_message = "Voice message" if is_voice_message else user_message
-    st.session_state.messages.append({"role": "user", "content": display_message})
+    is_image_message = send_image and image_input is not None
+    image_bytes = image_input.getvalue() if is_image_message else None
+    display_message = image_message.strip() or "Plant image" if is_image_message else "Voice message" if is_voice_message else user_message
+    st.session_state.messages.append({"role": "user", "content": display_message, "image_bytes": image_bytes})
     with st.chat_message("user"):
         st.markdown(display_message)
         if is_voice_message:
             st.audio(voice_input.getvalue(), format="audio/wav")
+        if image_bytes:
+            st.image(image_bytes)
 
     with st.chat_message("assistant"):
         try:
@@ -108,6 +148,16 @@ def main() -> None:
                     jwt=jwt,
                     conversation_id=conversation_id,
                     wav_bytes=voice_input.getvalue(),
+                )
+            elif is_image_message:
+                payload = send_image_message(
+                    api_base_url=api_base_url,
+                    jwt=jwt,
+                    conversation_id=conversation_id,
+                    image_bytes=image_bytes or b"",
+                    filename=image_input.name,
+                    content_type=image_input.type,
+                    message=image_message,
                 )
             else:
                 payload = send_chat_message(

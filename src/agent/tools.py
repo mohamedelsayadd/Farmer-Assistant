@@ -2,6 +2,8 @@ import logging
 from typing import Any
 
 from core.logging import json_preview
+from models.schemas.chat import UploadedImage
+from providers.plant_disease_client import PlantDiseaseClient
 from providers.renile_client import ReNileClient
 from services.historical_summary_processor import process_daily_sensor_response, process_hourly_sensor_response
 
@@ -11,6 +13,19 @@ ToolResult = dict[str, Any] | list[dict[str, Any]]
 
 
 OPENAI_TOOLS: list[dict[str, Any]] = [
+    {
+        "type": "function",
+        "function": {
+            "name": "plant_diseases_detection",
+            "description": "Diagnose an uploaded plant image for disease. Use when the current user request includes a plant image upload.",
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "required": [],
+                "additionalProperties": False,
+            },
+        },
+    },
     {
         "type": "function",
         "function": {
@@ -136,6 +151,20 @@ async def execute_specific_time_readings_tool(
     return readings
 
 
+async def execute_plant_diseases_detection_tool(
+    plant_disease_client: PlantDiseaseClient,
+    image: UploadedImage,
+) -> dict[str, Any]:
+    logger.info("tool_plant_diseases_detection_started filename=%s bytes=%s", image.filename, len(image.content))
+    prediction = await plant_disease_client.predict(
+        image_bytes=image.content,
+        filename=image.filename,
+        content_type=image.content_type,
+    )
+    logger.info("tool_plant_diseases_detection_completed result_preview=%s", json_preview(prediction))
+    return prediction
+
+
 async def execute_historical_readings_tool(
     jwt: str,
     device_id: str | None = None,
@@ -172,6 +201,8 @@ async def execute_tool(
     jwt: str,
     arguments: dict[str, Any],
     renile_client: ReNileClient,
+    plant_disease_client: PlantDiseaseClient | None = None,
+    image: UploadedImage | None = None,
 ) -> ToolResult:
     logger.info("tool_dispatch_started tool_name=%s arguments=%s", name, json_preview(arguments))
     if name == "get_current_readings":
@@ -197,6 +228,15 @@ async def execute_tool(
             renile_client=renile_client,
             device_id=arguments["device_id"],
             start_time=arguments["start_time"],
+        )
+        logger.info("tool_dispatch_completed tool_name=%s", name)
+        return tool_result
+    if name == "plant_diseases_detection":
+        if plant_disease_client is None or image is None:
+            raise ValueError("plant_diseases_detection requires an uploaded image")
+        tool_result = await execute_plant_diseases_detection_tool(
+            plant_disease_client=plant_disease_client,
+            image=image,
         )
         logger.info("tool_dispatch_completed tool_name=%s", name)
         return tool_result

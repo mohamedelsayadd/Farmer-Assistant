@@ -42,6 +42,10 @@ class Settings(BaseSettings):
     renile_current_readings_path: str = Field(alias="RENILE_CURRENT_READINGS_PATH")
     renile_historical_readings_path: str = Field(alias="RENILE_HISTORICAL_READINGS_PATH")
 
+    plant_disease_api_base_url: str = Field(alias="PLANT_DISEASE_API_BASE_URL")
+    plant_disease_predict_path: str = Field(alias="PLANT_DISEASE_PREDICT_PATH")
+    plant_disease_max_image_bytes: int = Field(alias="PLANT_DISEASE_MAX_IMAGE_BYTES", gt=0)
+
     http_timeout_seconds: float = Field(alias="HTTP_TIMEOUT_SECONDS", gt=0)
 
     asr_provider: str = Field(alias="ASR_PROVIDER")

@@ -1,5 +1,7 @@
+import json
 import logging
 from time import perf_counter
+from typing import Any
 
 from openai import OpenAIError
 from redis.exceptions import RedisError
@@ -35,6 +37,7 @@ class ChatService:
                 jwt=request.jwt,
                 user_message=request.message,
                 history=history,
+                image=request.image,
             )
             await self._memory.append(request.conversation_id, "user", request.message)
             await self._memory.append(request.conversation_id, "assistant", agent_result.response)
@@ -45,7 +48,11 @@ class ChatService:
                 len(agent_result.response),
                 elapsed_ms,
             )
-            return ChatResponse(conversation_id=request.conversation_id, message=agent_result.response)
+            return ChatResponse(
+                conversation_id=request.conversation_id,
+                message=agent_result.response,
+                **plant_disease_metadata(agent_result.tool_contexts),
+            )
         except (OpenAIError, RedisError):
             elapsed_ms = int((perf_counter() - started_at) * 1000)
             logger.exception(
@@ -57,3 +64,21 @@ class ChatService:
                 conversation_id=request.conversation_id,
                 message="معلش، حصلت مشكلة مؤقتة. جرّب تاني بعد شوية.",
             )
+
+
+def plant_disease_metadata(tool_contexts: list[Any]) -> dict[str, str | None]:
+    for context in tool_contexts:
+        if getattr(context, "tool_name", None) != "plant_diseases_detection":
+            continue
+        try:
+            payload = json.loads(context.content)
+        except (json.JSONDecodeError, TypeError):
+            logger.warning("plant_disease_metadata_parse_failed")
+            return {"source": None, "disease": None}
+        source = payload.get("source")
+        disease = payload.get("disease")
+        return {
+            "source": source if isinstance(source, str) and source else None,
+            "disease": disease if isinstance(disease, str) and disease else None,
+        }
+    return {"source": None, "disease": None}

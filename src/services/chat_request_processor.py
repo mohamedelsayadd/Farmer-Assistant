@@ -6,7 +6,10 @@ from pydantic import ValidationError
 from starlette.datastructures import UploadFile
 
 from models.schemas.chat import ChatRequest
+from services.image_processor import read_image_file
 from services.wav_processor import transcribe_wav_file
+
+IMAGE_UPLOAD_MESSAGE = "تم رفع صورة نبات. شخص صورة النبات المرفوعة."
 
 
 async def parse_chat_request(request: Request) -> tuple[ChatRequest, bool]:
@@ -29,16 +32,26 @@ async def parse_form_chat_request(request: Request) -> tuple[ChatRequest, bool]:
     conversation_id = get_form_str(form, "conversation_id")
     message = get_form_str(form, "message")
     wav_file = form.get("wav_file")
+    image_file = form.get("image_file")
 
     has_message = bool(message and message.strip())
     has_audio = isinstance(wav_file, UploadFile) and bool(wav_file.filename)
-    if has_message == has_audio:
-        raise HTTPException(status_code=422, detail="Send exactly one of message or wav_file.")
+    has_image = isinstance(image_file, UploadFile) and bool(image_file.filename)
+    if has_audio and (has_message or has_image):
+        raise HTTPException(status_code=422, detail="wav_file cannot be sent with message or image_file.")
+    if not has_audio and not has_message and not has_image:
+        raise HTTPException(status_code=422, detail="Send message, wav_file, image_file, or message with image_file.")
 
     if has_audio:
         message = await transcribe_wav_file(request, wav_file)
+    image = await read_image_file(request, image_file) if has_image else None
+    if has_image and has_message:
+        message = message.strip()
+    elif has_image:
+        message = IMAGE_UPLOAD_MESSAGE
 
-    return validate_chat_request({"jwt": jwt, "conversation_id": conversation_id, "message": message or ""}), False #has_audio
+    payload = {"jwt": jwt, "conversation_id": conversation_id, "message": message or "", "image": image}
+    return validate_chat_request(payload), has_audio
 
 
 def validate_chat_request(payload: dict[str, Any]) -> ChatRequest:

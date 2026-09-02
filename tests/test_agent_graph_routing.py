@@ -5,6 +5,7 @@ from typing import Any
 import pytest
 
 from agent.graph import FarmerAssistantAgent
+from models.schemas.chat import UploadedImage
 
 
 def test_tool_path_routes_current_readings() -> None:
@@ -29,6 +30,12 @@ def test_tool_path_routes_specific_time_readings_to_historical_path() -> None:
     state = {"assistant_message": _assistant_message("get_specific_time_readings")}
 
     assert FarmerAssistantAgent._tool_path(state) == "historical_tools"
+
+
+def test_tool_path_routes_plant_diseases_detection_to_plant_path() -> None:
+    state = {"assistant_message": _assistant_message("plant_diseases_detection")}
+
+    assert FarmerAssistantAgent._tool_path(state) == "plant_disease_tools"
 
 
 def test_tool_path_routes_no_tool_calls_to_final() -> None:
@@ -66,6 +73,17 @@ def test_resolve_device_id_matches_case_insensitive_name() -> None:
 def test_resolve_device_id_returns_none_for_blank_and_unknown() -> None:
     assert FarmerAssistantAgent._resolve_device_id("", BACKEND_DEVICES) is None  # noqa: SLF001
     assert FarmerAssistantAgent._resolve_device_id("Unknown Device", BACKEND_DEVICES) is None  # noqa: SLF001
+
+
+def test_build_messages_adds_image_marker_only_to_current_prompt() -> None:
+    messages = FarmerAssistantAgent._build_messages(  # noqa: SLF001
+        history=[{"role": "user", "content": "old message"}],
+        user_message="ايه المرض ده؟",
+        image=UploadedImage(filename="plant.jpg", content_type="image/jpeg", content=b"fake-image"),
+    )
+
+    assert messages[-2] == {"role": "user", "content": "old message"}
+    assert messages[-1] == {"role": "user", "content": "ايه المرض ده؟\n\n[تم رفع صورة نبات مع الرسالة.]"}
 
 
 class FakeReNileClient:

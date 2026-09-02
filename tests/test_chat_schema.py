@@ -29,6 +29,8 @@ def test_chat_response_accepts_optional_audio() -> None:
     assert response.model_dump() == {
         "conversation_id": "conversation-1",
         "message": "أهلا بيك",
+        "source": None,
+        "disease": None,
         "audio_wav_base64": "UklGRg==",
         "audio_content_type": "audio/wav",
     }

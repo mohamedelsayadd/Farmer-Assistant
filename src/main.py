@@ -14,6 +14,7 @@ from memory.tool_cache import ToolCache
 from providers.ASR.factory import create_asr_provider
 from providers.TTS.factory import create_text_to_speech_provider
 from providers.llm import LLMProvider
+from providers.plant_disease_client import PlantDiseaseClient
 from providers.renile_client import ReNileClient
 from services.chat_service import ChatService
 
@@ -37,6 +38,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     )
     llm = LLMProvider(settings)
     renile_client = ReNileClient(settings)
+    plant_disease_client = PlantDiseaseClient(settings)
     asr = create_asr_provider(settings)
     text_to_speech = create_text_to_speech_provider(settings)
     await asr.load_model()
@@ -47,8 +49,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.asr = asr
     app.state.text_to_speech = text_to_speech
     app.state.asr_max_audio_bytes = settings.asr_max_audio_bytes
+    app.state.plant_disease_max_image_bytes = settings.plant_disease_max_image_bytes
     tool_cache = ToolCache(redis=tool_cache_redis, ttl_seconds=settings.redis_tool_cache_ttl_seconds)
-    app.state.chat_service = ChatService(memory=memory, agent=FarmerAssistantAgent(llm, renile_client, tool_cache))
+    app.state.chat_service = ChatService(
+        memory=memory,
+        agent=FarmerAssistantAgent(llm, renile_client, tool_cache, plant_disease_client),
+    )
 
     try:
         yield

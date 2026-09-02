@@ -7,8 +7,10 @@ from agent.tools import (
     execute_current_readings_tool,
     execute_devices_ids_tool,
     execute_last_duration_summary_tool,
+    execute_plant_diseases_detection_tool,
     execute_specific_time_readings_tool,
 )
+from models.schemas.chat import UploadedImage
 
 
 def test_tool_schemas_do_not_expose_jwt() -> None:
@@ -28,6 +30,13 @@ def test_devices_ids_tool_has_no_agent_arguments() -> None:
     devices_tool = next(tool for tool in OPENAI_TOOLS if tool["function"]["name"] == "get_devices_ids")
 
     assert devices_tool["function"]["parameters"]["properties"] == {}
+
+
+def test_plant_diseases_detection_tool_has_no_agent_arguments() -> None:
+    plant_tool = next(tool for tool in OPENAI_TOOLS if tool["function"]["name"] == "plant_diseases_detection")
+
+    assert plant_tool["function"]["parameters"]["properties"] == {}
+    assert "jwt" not in str(plant_tool).lower()
 
 
 def test_historical_readings_tool_is_not_exposed_to_agent() -> None:
@@ -112,6 +121,21 @@ class FakeReNileClient:
         }
 
 
+class FakePlantDiseaseClient:
+    async def predict(self, image_bytes: bytes, filename: str, content_type: str | None) -> dict:
+        assert image_bytes == b"fake-image"
+        assert filename == "plant.jpg"
+        assert content_type == "image/jpeg"
+        return {
+            "is_plant": True,
+            "disease": "potato early blight",
+            "is_healthy": False,
+            "confidence": 0.636,
+            "source": "yolo",
+            "message": "نصيحة عربية",
+        }
+
+
 @pytest.mark.asyncio
 async def test_current_readings_tool_returns_backend_response_unchanged() -> None:
     current_readings = await execute_current_readings_tool(
@@ -176,4 +200,21 @@ async def test_specific_time_readings_tool_returns_processed_api_response() -> N
         "start_time": "2026-06-01 00:00",
         "data_type": "day",
         "hourly_rows": [{"timestamp": "2026-06-01T04:00:00.000Z", "CO2": 532.55}],
+    }
+
+
+@pytest.mark.asyncio
+async def test_plant_diseases_detection_tool_returns_backend_response_unchanged() -> None:
+    prediction = await execute_plant_diseases_detection_tool(
+        plant_disease_client=FakePlantDiseaseClient(),  # type: ignore[arg-type]
+        image=UploadedImage(filename="plant.jpg", content_type="image/jpeg", content=b"fake-image"),
+    )
+
+    assert prediction == {
+        "is_plant": True,
+        "disease": "potato early blight",
+        "is_healthy": False,
+        "confidence": 0.636,
+        "source": "yolo",
+        "message": "نصيحة عربية",
     }

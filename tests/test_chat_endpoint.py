@@ -13,6 +13,13 @@ class FakeChatService:
 
     async def chat(self, request: ChatRequest) -> ChatResponse:
         self.requests.append(request)
+        if request.image is not None:
+            return ChatResponse(
+                conversation_id=request.conversation_id,
+                message="reply: plant diagnosis",
+                source="yolo",
+                disease="potato early blight",
+            )
         return ChatResponse(conversation_id=request.conversation_id, message=f"reply: {request.message}")
 
 
@@ -53,6 +60,7 @@ def make_client(
     app.state.asr = asr or FakeASR()
     app.state.text_to_speech = tts
     app.state.asr_max_audio_bytes = 1024
+    app.state.plant_disease_max_image_bytes = 1024
     return TestClient(app), chat_service, tts
 
 
@@ -139,6 +147,30 @@ def test_chat_endpoint_accepts_form_text_message() -> None:
     ]
 
 
+def test_chat_endpoint_accepts_multipart_image_file() -> None:
+    client, chat_service, _ = make_client()
+
+    response = client.post(
+        "/api/v1/chat",
+        data={"jwt": "runtime-jwt", "conversation_id": "conversation-1"},
+        files={"image_file": ("plant.jpg", b"fake-image", "image/jpeg")},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "conversation_id": "conversation-1",
+        "message": "reply: plant diagnosis",
+        "source": "yolo",
+        "disease": "potato early blight",
+    }
+    assert len(chat_service.requests) == 1
+    request = chat_service.requests[0]
+    assert request.message == "تم رفع صورة نبات. شخص صورة النبات المرفوعة."
+    assert request.image is not None
+    assert request.image.filename == "plant.jpg"
+    assert request.image.content == b"fake-image"
+
+
 def test_chat_endpoint_rejects_multipart_with_message_and_wav_file() -> None:
     client, _, _ = make_client()
 
@@ -153,7 +185,7 @@ def test_chat_endpoint_rejects_multipart_with_message_and_wav_file() -> None:
     )
 
     assert response.status_code == 422
-    assert response.json()["detail"] == "Send exactly one of message or wav_file."
+    assert response.json()["detail"] == "wav_file cannot be sent with message or image_file."
 
 
 def test_chat_endpoint_rejects_multipart_without_message_or_wav_file() -> None:
@@ -165,7 +197,89 @@ def test_chat_endpoint_rejects_multipart_without_message_or_wav_file() -> None:
     )
 
     assert response.status_code == 422
-    assert response.json()["detail"] == "Send exactly one of message or wav_file."
+    assert response.json()["detail"] == "Send message, wav_file, image_file, or message with image_file."
+
+
+def test_chat_endpoint_accepts_multipart_with_message_and_image_file() -> None:
+    client, chat_service, _ = make_client()
+
+    response = client.post(
+        "/api/v1/chat",
+        data={
+            "jwt": "runtime-jwt",
+            "conversation_id": "conversation-1",
+            "message": "درجة الحرارة كام؟",
+        },
+        files={"image_file": ("plant.jpg", b"fake-image", "image/jpeg")},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "conversation_id": "conversation-1",
+        "message": "reply: plant diagnosis",
+        "source": "yolo",
+        "disease": "potato early blight",
+    }
+    assert len(chat_service.requests) == 1
+    request = chat_service.requests[0]
+    assert request.message == "درجة الحرارة كام؟"
+    assert request.image is not None
+    assert request.image.filename == "plant.jpg"
+
+
+def test_chat_endpoint_rejects_multipart_with_wav_and_image_file() -> None:
+    client, _, _ = make_client()
+
+    response = client.post(
+        "/api/v1/chat",
+        data={"jwt": "runtime-jwt", "conversation_id": "conversation-1"},
+        files={
+            "wav_file": ("voice.wav", b"fake-wav", "audio/wav"),
+            "image_file": ("plant.jpg", b"fake-image", "image/jpeg"),
+        },
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == "wav_file cannot be sent with message or image_file."
+
+
+def test_chat_endpoint_rejects_unsupported_image_type() -> None:
+    client, _, _ = make_client()
+
+    response = client.post(
+        "/api/v1/chat",
+        data={"jwt": "runtime-jwt", "conversation_id": "conversation-1"},
+        files={"image_file": ("plant.gif", b"fake-image", "image/gif")},
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == "image_file must be one of: ['.jpeg', '.jpg', '.png', '.webp']."
+
+
+def test_chat_endpoint_rejects_empty_image() -> None:
+    client, _, _ = make_client()
+
+    response = client.post(
+        "/api/v1/chat",
+        data={"jwt": "runtime-jwt", "conversation_id": "conversation-1"},
+        files={"image_file": ("plant.jpg", b"", "image/jpeg")},
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == "image_file must not be empty."
+
+
+def test_chat_endpoint_rejects_large_image() -> None:
+    client, _, _ = make_client()
+
+    response = client.post(
+        "/api/v1/chat",
+        data={"jwt": "runtime-jwt", "conversation_id": "conversation-1"},
+        files={"image_file": ("plant.jpg", b"x" * 1025, "image/jpeg")},
+    )
+
+    assert response.status_code == 413
+    assert response.json()["detail"] == "image_file is too large."
 
 
 def test_chat_endpoint_rejects_non_wav_audio() -> None:
