@@ -9,7 +9,7 @@ from models.schemas.chat import ChatRequest
 from services.image_processor import read_image_file
 from services.wav_processor import transcribe_wav_file
 
-IMAGE_UPLOAD_MESSAGE = "تم رفع صورة نبات. شخص صورة النبات المرفوعة."
+IMAGE_UPLOAD_MESSAGE = "[The user uploaded a plant image with no text. Diagnose the uploaded plant image.]"
 
 
 async def parse_chat_request(request: Request) -> tuple[ChatRequest, bool]:

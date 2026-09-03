@@ -22,7 +22,7 @@ CURRENT_TOOL_NAMES = {"get_current_readings"}
 HISTORICAL_TOOL_NAMES = {"get_devices_ids", "get_last_duration_summary", "get_specific_time_readings"}
 HISTORICAL_READING_TOOL_NAMES = {"get_last_duration_summary", "get_specific_time_readings"}
 PLANT_DISEASE_TOOL_NAMES = {"plant_diseases_detection"}
-IMAGE_ATTACHMENT_MARKER = "[تم رفع صورة نبات مع الرسالة.]"
+IMAGE_ATTACHMENT_MARKER = "[The user attached a plant image with this message.]"
 MAX_TOOL_ROUNDS = 4
 FALLBACK_RESPONSE = "معلش، مش قادر أوصل لإجابة واضحة دلوقتي."
 

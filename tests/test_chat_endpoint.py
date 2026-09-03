@@ -165,7 +165,9 @@ def test_chat_endpoint_accepts_multipart_image_file() -> None:
     }
     assert len(chat_service.requests) == 1
     request = chat_service.requests[0]
-    assert request.message == "تم رفع صورة نبات. شخص صورة النبات المرفوعة."
+    assert request.message == (
+        "[The user uploaded a plant image with no text. Diagnose the uploaded plant image.]"
+    )
     assert request.image is not None
     assert request.image.filename == "plant.jpg"
     assert request.image.content == b"fake-image"

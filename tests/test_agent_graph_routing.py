@@ -83,7 +83,10 @@ def test_build_messages_adds_image_marker_only_to_current_prompt() -> None:
     )
 
     assert messages[-2] == {"role": "user", "content": "old message"}
-    assert messages[-1] == {"role": "user", "content": "ايه المرض ده؟\n\n[تم رفع صورة نبات مع الرسالة.]"}
+    assert messages[-1] == {
+        "role": "user",
+        "content": "ايه المرض ده؟\n\n[The user attached a plant image with this message.]",
+    }
 
 
 class FakeReNileClient:
