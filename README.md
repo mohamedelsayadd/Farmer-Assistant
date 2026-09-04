@@ -1,115 +1,55 @@
+<p align="center">
+  <img src="farmer-assistant-banner.jpeg" alt="ReNile Farmer Assistant" width="100%">
+</p>
+
 # ReNile Farmer Assistant
 
-Arabic farm assistant backend for ReNile users. The service exposes a FastAPI chat endpoint, uses an OpenAI-compatible LLM API for conversation and tool calling, reads ReNile device data through backend tools, and stores short-term conversation memory in Redis.
+Arabic-first AI agent for the [ReNile-IoT](https://renile-iot.com) platform, answering farmers' questions in Egyptian Arabic or English via text, voice, or plant photos.
 
-The assistant is prompted to answer in simple Egyptian Arabic and can help with:
+Built on FastAPI, the agent calls backend tools to read live and historical ReNile device data, diagnoses plant diseases from images, and supports speech in and out.
 
-- Current farm/device readings.
-- Historical daily or hourly readings for selected devices.
-- General agricultural questions that do not require private farm data.
-- Follow-up questions using recent Redis-backed conversation memory and backend tool cache.
+## Features
 
-## Tech Stack
+- 🌱 **Plant disease diagnosis** — send a leaf photo, get the likely disease and advice.
+- 📊 **Farm readings** — current device status, plus daily summaries and hourly history.
+- 🎙️ **Voice in and out** — send a WAV, get a spoken reply back.
+- 🧠 **Conversation memory** — Redis-backed follow-ups, with a separate cache for tool results.
+- 🌍 **Bilingual** — replies in Egyptian Arabic or English, matching how the user wrote.
 
-- Python 3.12
-- FastAPI
-- LangGraph-style agent orchestration
-- OpenAI SDK against an OpenAI-compatible LLM server
-- Redis for short-term memory
-- HTTPX for ReNile API calls
-- Cohere Transcribe Arabic for speech recognition (ASR), with Faster Whisper as a fallback provider, and VoiceTut TTS for voice replies
-- Streamlit manual testing client
-- pytest test suite
+## Stack
 
-## Project Structure
+Python 3.12 · FastAPI · OpenAI-compatible LLM · Redis · HTTPX · Cohere Transcribe Arabic (ASR, Faster-Whisper fallback) · VoiceTut (TTS) · Streamlit · pytest
 
-```text
-.
-|-- src/
-|   |-- main.py                         # FastAPI application
-|   |-- api/v1/endpoints/chat.py        # Chat endpoint
-|   |-- agent/                          # Agent graph, prompt, and tool routing
-|   |-- core/                           # Settings and logging
-|   |-- memory/                         # Redis memory implementation
-|   |-- models/schemas/                 # Pydantic request/response schemas
-|   |-- providers/                      # LLM and ReNile API clients
-|   `-- services/                       # Chat service and response processors
-|-- tests/                              # Unit tests
-|-- docker/compose.yaml                 # Redis for local development
-|-- streamlit_app.py                    # Manual chat tester
-|-- .env.example                        # Expected environment variables
-`-- pyproject.toml                      # Dependencies and tooling
-```
+## Quick Start
 
-## Requirements
-
-- Python `>=3.12,<3.13`
-- `uv`
-- Docker, for local Redis
-- An OpenAI-compatible LLM endpoint, such as vLLM or another compatible server
-- A valid ReNile JWT for testing authenticated device data flows
-
-## Setup
-
-Install dependencies:
+**Requirements:** Python `>=3.12,<3.13`, [`uv`](https://docs.astral.sh/uv/), Docker, an OpenAI-compatible LLM endpoint, and a ReNile JWT.
 
 ```bash
-uv sync
-```
-
-Create your local environment file:
-
-```bash
-cp .env.example .env
-```
-
-Update `.env` with your local values. Do not commit real secrets.
-
-Important settings:
-
-```env
-LLM_API_KEY=EMPTY
-LLM_BASE_URL=http://localhost:5000/v1
-LLM_MODEL=Qwen/Qwen2.5-1.5B-Instruct
-REDIS_URL=redis://localhost:6379/0
-REDIS_TOOL_CACHE_URL=redis://localhost:6379/1
-RENILE_API_BASE_URL=https://renile-iot.com
-CHAT_API_BASE_URL=http://localhost:8000
-```
-
-## Running Locally
-
-Start Redis:
-
-```bash
+uv sync                                        # install dependencies
+cp .env.example .env                           # then fill in your values
 docker compose -f docker/compose.yaml up -d redis
+uv run uvicorn main:app --reload               # http://localhost:8000
 ```
 
-Start your OpenAI-compatible LLM server separately and make sure `LLM_BASE_URL` and `LLM_MODEL` match it.
-
-Start the FastAPI app:
+Check it's alive:
 
 ```bash
-uv run uvicorn main:app --reload
+curl http://localhost:8000/health   # {"status":"ok"}
 ```
 
-Health check:
+Then try it in the browser with the manual tester — enter the backend URL and your ReNile JWT in the sidebar:
 
 ```bash
-curl http://localhost:8000/health
+uv run streamlit run streamlit_app.py
 ```
 
-Expected response:
-
-```json
-{"status":"ok"}
-```
+> **Note:** ASR/TTS models load at startup, so the first boot is slow. The Cohere ASR weights are gated on Hugging Face — accept the model conditions and set `HF_TOKEN` (or run `hf auth login`) first.
 
 ## API
 
-### `POST /api/v1/chat`
+One endpoint: `POST /api/v1/chat`. Full reference in [Farmer-Assistant-API-Doc.md](Farmer-Assistant-API-Doc.md).
 
-Text request body:
+**Text** — `application/json`:
 
 ```json
 {
@@ -119,102 +59,68 @@ Text request body:
 }
 ```
 
-Voice requests use the same endpoint with `multipart/form-data`:
+**Voice or image** — `multipart/form-data` with `jwt`, `conversation_id`, and one of:
 
-```text
-jwt=<renile-jwt>
-conversation_id=conversation-123
-wav_file=@voice.wav
-```
+| Field | Notes |
+| --- | --- |
+| `message` | Plain text. |
+| `wav_file` | WAV audio, transcribed then answered. Cannot be combined with the others. |
+| `image_file` | `.jpg` / `.jpeg` / `.png` / `.webp`, optionally alongside `message`. |
 
-Send exactly one user input per request: either `message` or `wav_file`, not both. WAV audio is transcribed with the configured ASR provider, then the transcribed text follows the same chat flow as a typed message.
-
-`ASR_PROVIDER` selects the transcription backend: `cohere` (default) runs the open weights of `CohereLabs/cohere-transcribe-arabic-07-2026` locally through `transformers`, and `faster_whisper` runs a CTranslate2 Whisper model. Configure model placement with `ASR_DEVICE` plus `ASR_DTYPE` (cohere) or `ASR_COMPUTE_TYPE` (faster-whisper), and cap upload size with `ASR_MAX_AUDIO_BYTES`. `ASR_LANGUAGE` is required for `cohere` — its processor builds the decoder prompt from the language code and has no auto-detection mode — while `faster_whisper` accepts an empty value to auto-detect. The Cohere weights live in a gated Hugging Face repo, so accept the conditions on the model page and make a Hugging Face token available (`HF_TOKEN` or `hf auth login`) before the first startup. Each transcription is logged as an `asr_completed` line that includes the transcribed text.
-
-When the input is voice, the backend also tries to synthesize the assistant reply with VoiceTut TTS. Configure the model placement with `TTS_DEVICE` and `TTS_DTYPE`, and configure the voice with `TTS_SPEAKER`, `TTS_NUM_STEP`, `TTS_GUIDANCE_SCALE`, and `TTS_SPEED`. If TTS fails, the API logs a warning and returns the text response only.
-
-Response body:
+**Response:**
 
 ```json
 {
   "conversation_id": "conversation-123",
   "message": "...",
+  "disease": "...",
+  "source": "...",
   "audio_wav_base64": "...",
   "audio_content_type": "audio/wav"
 }
 ```
 
-The audio fields are included only for successful voice replies.
+`disease` and `source` appear only for image diagnoses; the audio fields only for voice requests.
 
-The JWT is required by the backend to call ReNile APIs. It is not exposed to the LLM tool schemas, prompts, memory, or logs.
+The JWT is used by the backend to call ReNile APIs. It is never exposed to the LLM, prompts, memory, or logs.
 
-## Manual Streamlit Tester
+## Configuration
 
-Run the Streamlit client:
+All settings come from `.env` — see [`.env.example`](.env.example) for the full annotated list. Every key is required; a missing one fails at startup rather than silently defaulting.
 
-```bash
-uv run streamlit run streamlit_app.py
+The ones you'll usually change:
+
+| Key | Purpose |
+| --- | --- |
+| `LLM_BASE_URL`, `LLM_MODEL` | Your OpenAI-compatible LLM server. |
+| `REDIS_URL`, `REDIS_TOOL_CACHE_URL` | Conversation memory (DB 0) and tool cache (DB 1). |
+| `RENILE_API_BASE_URL` | ReNile platform API. |
+| `PLANT_DISEASE_API_BASE_URL` | Plant disease prediction service. |
+| `ASR_PROVIDER` | `cohere` (default) or `faster_whisper`. |
+| `ASR_DEVICE`, `TTS_DEVICE` | Where the speech models run, e.g. `cuda:0` or `cpu`. |
+| `CHAT_API_BASE_URL` | Backend URL used by the Streamlit tester. |
+
+## How It Works
+
+```
+request ──▶ parse (JSON / audio / image) ──▶ agent loop ──▶ response (+ TTS)
+                                               │
+                                               ├─ current readings  ──┐
+                                               ├─ historical data   ──┼─▶ ReNile API
+                                               ├─ device lookup     ──┘
+                                               └─ plant diagnosis   ───▶ Disease API
 ```
 
-In the sidebar, provide:
+The agent runs a bounded tool-calling loop against the LLM. Historical questions always resolve a real device ID first, and tool results are cached in Redis so repeat questions don't re-hit ReNile. Readings before 2026-01-01 are out of range, and off-topic questions are declined.
 
-- Backend URL, for example `http://localhost:8000`.
-- ReNile JWT.
-- Conversation ID, generated automatically unless changed manually.
-
-The tester calls `POST /api/v1/chat` and keeps display history locally.
-
-## Agent Tools
-
-The LLM can request backend-executed tools for farm data:
-
-- `get_current_readings`: gets latest device readings from ReNile `RENILE_CURRENT_READINGS_PATH`. The backend returns this already cleaned, so the result is passed to the agent unchanged.
-- `get_devices_ids`: discovers the user's available devices before historical queries, from `RENILE_DEVICES_PATH`. Returns a bare array of `{_id, name}`, also passed through unchanged.
-- `get_last_duration_summary`: gets daily historical rows for a selected device and period.
-- `get_specific_time_readings`: gets hourly readings for a selected device on a specific day/time.
-
-Historical tools require a real `device_id` resolved from `get_devices_ids`. Device names are never passed directly as historical tool IDs.
-
-## Memory Behavior
-
-Redis DB 0 stores recent conversation messages under `conversation:{conversation_id}`. Defaults from `.env.example`:
-
-- TTL: `3600` seconds
-- Max messages: `12`
-
-Redis DB 1 stores processed tool results under keys shaped like `tool_cache:{conversation_id}:{tool_name}:{arguments_hash}`.
-
-Tool results are not injected into the LLM prompt memory. When the LLM requests a tool, the backend checks the tool cache first and only calls ReNile on cache miss.
-
-## Development Commands
-
-Run tests:
+## Development
 
 ```bash
-uv run pytest
+uv run pytest                                  # all tests
+uv run pytest tests/test_tools.py::test_name   # one test
+uv run python -m compileall src                # syntax check
 ```
 
-Run a focused test file:
+Tests use fakes throughout — no live Redis, LLM, or external APIs needed.
 
-```bash
-uv run pytest tests/test_tools.py
-```
-
-Syntax-check backend code:
-
-```bash
-uv run python -m compileall src
-```
-
-Syntax-check the Streamlit client:
-
-```bash
-uv run python -m py_compile streamlit_app.py
-```
-
-## Notes
-
-- Settings are loaded from root `.env` using `pydantic-settings`.
-- Redis must be reachable at API startup because the FastAPI lifespan pings Redis.
-- ReNile API paths are configured through `RENILE_DEVICES_PATH`, `RENILE_CURRENT_READINGS_PATH`, and `RENILE_HISTORICAL_READINGS_PATH`.
-- The assistant must answer in simple Egyptian Arabic according to `src/agent/prompts.py`.
+Project layout, architecture notes, and the rules to follow when changing the agent live in [AGENTS.md](AGENTS.md) and [CLAUDE.md](CLAUDE.md).
