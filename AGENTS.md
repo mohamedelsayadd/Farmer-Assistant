@@ -62,7 +62,8 @@
 ## Prompt Rules To Preserve
 - The reply language is decided **only** from the text the user typed in the current message. Fully English text gets an English reply; Arabic or mixed Arabic/English gets Egyptian Arabic. Bracketed system markers, tool results, and earlier turns never change it. An image with no text follows the user's most recent text message, defaulting to Egyptian Arabic.
 - Arabic text returned by tools (disease names, messages) must be restated in English when the reply is English, never pasted verbatim.
-- Out-of-scope questions reply exactly — Arabic: `آسف، مقدرش أرد على سؤالك , أقدر بس اسعادك في قرائات مزرعتك وأمراض النباتات.` English: `Sorry, I can't answer that. I can only help with your farm readings and plant diseases.`
+- Core-agronomy questions (crops, soil, irrigation, fertilisation, pests, weeds, plant diseases, planting/harvest timing, greenhouses, post-harvest) are answered in full from general knowledge with **no** tool call, whether or not they concern the user's own farm. Tools are the only source of truth for this user's devices and readings. Livestock, machinery, market prices, and subsidies stay out of scope.
+- Out-of-scope questions reply exactly — Arabic: `آسف، مقدرش أرد على سؤالك , أقدر بس أساعدك في المواضيع الزراعية وقراءات مزرعتك وأمراض النباتات.` English: `Sorry, I can't answer that. I can only help with agriculture, your farm readings, and plant diseases.`
 - Do not answer or call tools for farm/device readings before `2026-01-01`; reply exactly — Arabic: `القراءات قبل 2026 غير متاحة.` English: `Readings from before 2026 are not available.`
 - The capability-help answer and the missing-data replies are fixed strings in both languages; keep both variants in sync when editing either.
 - Any request carrying an uploaded plant image must call `plant_diseases_detection` before answering, and the reply branches on `is_plant` / `is_healthy` / `disease`.

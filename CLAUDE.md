@@ -45,3 +45,5 @@ Tests must stay hermetic: fakes only, no live Redis/LLM/ReNile, no model downloa
 ## Behavior contracts baked into prompts
 
 `src/agent/prompts.py` contains exact response strings (out-of-scope refusal, capability help, pre-2026 readings refusal) in both Arabic and English. Reply language is decided *only* from the user's own typed text in the current message. Changing any of these means updating `tests/test_agent_memory_context.py`.
+
+Scope is split in two deliberately: **core agronomy** (crops, soil, irrigation, fertilisation, pests, weeds, plant diseases, planting/harvest timing, greenhouses, post-harvest) is answered from the model's own knowledge with no tool call, even when the question has nothing to do with the user's own farm; **this user's devices and readings** may come only from tools. The capability-help string advertises three things, matching that split plus image diagnosis. Anything outside agriculture — livestock, machinery, market prices, subsidies — still gets the fixed refusal.

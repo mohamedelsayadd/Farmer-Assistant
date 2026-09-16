@@ -57,10 +57,25 @@ def test_system_prompt_answers_capability_help_question() -> None:
     system_prompt = messages[0]["content"]
 
     assert "تقدر تساعدني ازاي؟" in system_prompt
-    assert "أقدر أساعدك في حاجتين أساسيين:" in system_prompt
-    assert "I can help you with two main things:" in system_prompt
+    assert "أقدر أساعدك في تلات حاجات أساسية:" in system_prompt
+    assert "I can help you with three main things:" in system_prompt
     assert "تشخيص مشاكل النبات" in system_prompt
     assert "قراءات المزرعة" in system_prompt
+    assert "استشارات زراعية" in system_prompt
+    assert "Agricultural advice" in system_prompt
+
+
+def test_system_prompt_answers_general_agriculture_questions_without_tools() -> None:
+    messages = FarmerAssistantAgent._build_messages(
+        history=[], user_message="إيه أحسن سماد للطماطم في الأرض الرملية؟"
+    )
+    system_prompt = messages[0]["content"]
+
+    assert "General agricultural knowledge — answer from your own knowledge, no tools" in system_prompt
+    assert "Never refuse an agriculture question just because" in system_prompt
+    assert "A general agriculture question never requires a tool call" in system_prompt
+    assert "Only reach for a tool when the user asks about their own devices" in system_prompt
+    assert "General agricultural knowledge needs no tools." in system_prompt
 
 
 def test_system_prompt_asks_for_clarification_on_unclear_follow_ups() -> None:

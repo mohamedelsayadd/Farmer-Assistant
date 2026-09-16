@@ -22,6 +22,7 @@ dependencies = [
     "soundfile>=0.14.0",
     "librosa>=0.11.0",
     "accelerate>=1.14.0",
+    "langfuse>=4.15.3",
 ]
 
 [dependency-groups]
