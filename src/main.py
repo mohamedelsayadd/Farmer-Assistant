@@ -9,6 +9,7 @@ from agent.graph import FarmerAssistantAgent
 from api.v1.endpoints.chat import router as chat_router
 from core.config import get_settings
 from core.logging import configure_logging
+from core.observability import create_langfuse_client
 from memory.redis_memory import RedisMemory
 from memory.tool_cache import ToolCache
 from providers.ASR.factory import create_asr_provider
@@ -23,6 +24,10 @@ from services.chat_service import ChatService
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings = get_settings()
     configure_logging(settings.log_level)
+
+    # tracing: constructing the client arms the langfuse openai drop-in
+    langfuse = create_langfuse_client(settings)
+    app.state.langfuse = langfuse
 
     # prepare redis clients
     redis = Redis.from_url(settings.redis_url, decode_responses=False)
@@ -61,6 +66,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     finally:
         await redis.aclose()
         await tool_cache_redis.aclose()
+        langfuse.shutdown()
 
 
 app = FastAPI(title="ReNile Farmer Assistant", lifespan=lifespan)

@@ -3,6 +3,7 @@ import logging
 from time import perf_counter
 from typing import Any
 
+from langfuse import get_client, observe, propagate_attributes
 from openai import OpenAIError
 from redis.exceptions import RedisError
 
@@ -18,6 +19,7 @@ class ChatService:
         self._memory = memory
         self._agent = agent
 
+    @observe(name="farmer-assistant-chat", capture_input=False)
     async def chat(self, request: ChatRequest) -> ChatResponse:
         started_at = perf_counter()
         logger.info(
@@ -25,45 +27,53 @@ class ChatService:
             request.conversation_id,
             len(request.message),
         )
-        try:
-            history = await self._memory.load(request.conversation_id)
-            logger.info(
-                "chat_memory_loaded conversation_id=%s history_messages=%s",
-                request.conversation_id,
-                len(history),
+        with propagate_attributes(session_id=request.conversation_id):
+            # the request itself is never captured: it carries the jwt and raw image bytes
+            get_client().update_current_span(
+                input={"message": request.message, "has_image": request.image is not None}
             )
-            agent_result = await self._agent.run(
-                conversation_id=request.conversation_id,
-                jwt=request.jwt,
-                user_message=request.message,
-                history=history,
-                image=request.image,
-            )
-            await self._memory.append(request.conversation_id, "user", request.message)
-            await self._memory.append(request.conversation_id, "assistant", agent_result.response)
-            elapsed_ms = int((perf_counter() - started_at) * 1000)
-            logger.info(
-                "chat_request_completed conversation_id=%s response_chars=%s latency_ms=%s",
-                request.conversation_id,
-                len(agent_result.response),
-                elapsed_ms,
-            )
-            return ChatResponse(
-                conversation_id=request.conversation_id,
-                message=agent_result.response,
-                **plant_disease_metadata(agent_result.tool_contexts),
-            )
-        except (OpenAIError, RedisError):
-            elapsed_ms = int((perf_counter() - started_at) * 1000)
-            logger.exception(
-                "chat_request_failed conversation_id=%s latency_ms=%s",
-                request.conversation_id,
-                elapsed_ms,
-            )
-            return ChatResponse(
-                conversation_id=request.conversation_id,
-                message="معلش، حصلت مشكلة مؤقتة. جرّب تاني بعد شوية.",
-            )
+            try:
+                history = await self._memory.load(request.conversation_id)
+                logger.info(
+                    "chat_memory_loaded conversation_id=%s history_messages=%s",
+                    request.conversation_id,
+                    len(history),
+                )
+                agent_result = await self._agent.run(
+                    conversation_id=request.conversation_id,
+                    jwt=request.jwt,
+                    user_message=request.message,
+                    history=history,
+                    image=request.image,
+                )
+                await self._memory.append(request.conversation_id, "user", request.message)
+                await self._memory.append(request.conversation_id, "assistant", agent_result.response)
+                elapsed_ms = int((perf_counter() - started_at) * 1000)
+                logger.info(
+                    "chat_request_completed conversation_id=%s response_chars=%s latency_ms=%s",
+                    request.conversation_id,
+                    len(agent_result.response),
+                    elapsed_ms,
+                )
+                return ChatResponse(
+                    conversation_id=request.conversation_id,
+                    message=agent_result.response,
+                    **plant_disease_metadata(agent_result.tool_contexts),
+                )
+            except (OpenAIError, RedisError):
+                elapsed_ms = int((perf_counter() - started_at) * 1000)
+                logger.exception(
+                    "chat_request_failed conversation_id=%s latency_ms=%s",
+                    request.conversation_id,
+                    elapsed_ms,
+                )
+                get_client().update_current_span(
+                    level="ERROR", status_message="chat_request_failed"
+                )
+                return ChatResponse(
+                    conversation_id=request.conversation_id,
+                    message="معلش، حصلت مشكلة مؤقتة. جرّب تاني بعد شوية.",
+                )
 
 
 def plant_disease_metadata(tool_contexts: list[Any]) -> dict[str, str | None]:

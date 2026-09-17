@@ -2,7 +2,7 @@ import logging
 from time import perf_counter
 from typing import Any
 
-from openai import AsyncOpenAI
+from langfuse.openai import AsyncOpenAI
 
 from core.config import Settings
 

@@ -46,6 +46,9 @@ BASE_ENV = {
     "TTS_NUM_STEP": "48",
     "TTS_GUIDANCE_SCALE": "2.5",
     "TTS_SPEED": "1.05",
+    "LANGFUSE_SECRET_KEY": "sk-lf-test",
+    "LANGFUSE_PUBLIC_KEY": "pk-lf-test",
+    "LANGFUSE_BASE_URL": "https://cloud.langfuse.com",
 }
 
 
