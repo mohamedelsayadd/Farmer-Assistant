@@ -12,33 +12,32 @@ uv run pytest                               # full suite
 uv run pytest tests/test_tools.py           # one file
 uv run pytest tests/test_tools.py::test_name  # one test
 uv run python -m compileall src             # syntax-check backend
-uv run python -m py_compile streamlit_app.py
 docker compose -f docker/compose.yaml up -d redis
 uv run uvicorn main:app --reload            # from repo root; pings Redis DB 0 and DB 1 on startup
-uv run streamlit run streamlit_app.py       # manual tester
+uv run streamlit run streamlit_app.py        # manual tester UI (dev dep); calls the running API
 ```
 
-No linter/formatter is configured. `src/` is an installed package (`[tool.setuptools] where=["src"]`), so imports are top-level (`from agent.graph import ...`), never `src.agent...`. pytest sets `pythonpath=["src"]` and `asyncio_mode=auto`, so async tests need no marker.
+No linter/formatter is configured. `src/` is an installed package (`[tool.setuptools] where=["src"]`), so imports are top-level (`from agent.agent import ...`), never `src.agent...`. pytest sets `pythonpath=["src"]` and `asyncio_mode=auto`, so async tests need no marker.
 
 Tests must stay hermetic: fakes only, no live Redis/LLM/ReNile, no model downloads or GPU use.
 
 ## Architecture
 
-**Request flow.** `POST /api/v1/chat` (`src/api/v1/endpoints/chat.py`) is a bare `Request` handler, not a typed body — `services/chat_request_processor.py` branches on content type and normalizes JSON *and* multipart into one `ChatRequest`. Multipart accepts `message`, `wav_file`, and/or `image_file`; `wav_file` is mutually exclusive with the other two. Audio is transcribed (`wav_processor`) into `message` before anything else runs, so the rest of the pipeline only ever sees text plus an optional `UploadedImage`. An image with no text gets a synthetic English marker message; the prompt explicitly instructs the model to ignore bracketed markers when picking reply language. Voice replies are added *after* the agent returns, in `voice_response_processor.add_voice_response`, and TTS failure degrades to a text-only response.
+**Request flow.** `POST /api/v1/chat` (`src/api/v1/endpoints/chat.py`) is a bare `Request` handler, not a typed body — `services/chat_request_processor.py` branches on content type and normalizes JSON *and* multipart into one `ChatRequest`. Multipart accepts `message`, `wav_file`, and/or `image_file`; `wav_file` is mutually exclusive with the other two. Audio is transcribed (`wav_processor`) into `message` before anything else runs, so the rest of the pipeline only ever sees text plus an optional `UploadedImage`. An image with no text gets a synthetic English marker message; the prompt explicitly instructs the model to ignore bracketed markers when picking reply language. There is no TTS: replies are always text.
 
-**Composition root.** `src/main.py`'s lifespan builds every dependency once (Redis clients, LLM, ReNile client, plant-disease client, ASR, TTS) and hangs them on `app.state`. Nothing constructs its own providers; the agent receives clients through its constructor. ASR/TTS models load eagerly at startup, so app boot is slow and requires the model weights to be reachable.
+**Composition root.** `src/main.py`'s lifespan builds every dependency once (Redis clients, `ChatOpenAI` model, ReNile client, plant-disease client, ASR, Langfuse callback handler) and hangs them on `app.state`. Nothing constructs its own providers; the agent receives clients through its constructor. ASR models load eagerly at startup, so app boot is slow and requires the model weights to be reachable.
 
-**Agent loop** (`src/agent/graph.py`) is a hand-rolled LangGraph-style loop, not LangGraph. Each round: one LLM chat call with `OPENAI_TOOLS`, then `_tool_path()` routes on the *first* tool call's name to one of three "nodes" (`current_tools` / `historical_tools` / `plant_disease_tools`); tool calls whose names fall outside the selected node's allowed set are skipped, not executed. Bounded by `MAX_TOOL_ROUNDS = 4`; falling off the end returns a fixed Arabic fallback string. The system prompt is rebuilt per request with today's date appended so relative Arabic dates resolve.
+**Agent** (`src/agent/agent.py`) is LangChain's `create_agent`, built once and invoked statelessly per request (no checkpointer — Redis DB 0 stays the source of truth for history). Per-request data and clients go in via `context=AgentContext(...)` and reach tools through `ToolRuntime`. Behavior lives in four middlewares: `@dynamic_prompt` (system prompt + today's date, so relative Arabic dates resolve), `@wrap_model_call` (strips Qwen `</think>` reasoning), an `@after_model` round limit (`MAX_TOOL_ROUNDS = 4`; exceeding it returns the fixed Arabic `FALLBACK_RESPONSE`), and `ToolErrorMiddleware` (`ValueError`/`httpx.HTTPError` → `"Tool failed temporarily."` tool message). Don't hand-build LangGraph graphs and don't move to `deepagents`.
 
-**Device-ID resolution** is the subtle part. The model routinely passes a device *name* or a list ordinal instead of an `_id`. Before any historical tool runs, `_resolve_historical_arguments` fetches (cache-first) the device list and maps the raw value to a real `_id` by exact id → ordinal → case-folded name. If it can't resolve, it returns the device list *as the tool result* so the model re-asks, rather than calling ReNile with garbage.
+**Device-ID resolution** is the subtle part. The model routinely passes a device *name* or a list ordinal instead of an `_id`. The historical tools in `agent/tools.py` fetch (cache-first) the device list and `resolve_device_id` maps the raw value to a real `_id` by exact id → ordinal → case-folded name. If it can't resolve, the tool returns the device list *as its result* so the model re-asks, rather than calling ReNile with garbage.
 
 **Two Redis databases, deliberately separate.** DB 0 (`memory/redis_memory.py`) holds only `user`/`assistant` turns under `conversation:{id}`; DB 1 (`memory/tool_cache.py`) holds tool results under `tool_cache:{conversation_id}:{tool}:{args_hash}`. Tool results are never written into prompt memory — the model only sees them within the round that fetched them.
 
-**JWT isolation.** The JWT arrives in the request body and is injected into ReNile calls only inside `agent/tools.py::execute_tool`. It must never reach a tool schema, prompt, memory, or log line; `tests/test_tools.py` asserts this, along with the fact that `data_type` (`month`/`day`) is fixed backend-side and not model-controlled.
+**JWT isolation.** The JWT arrives in the request body and reaches ReNile calls only via `AgentContext` inside the tools. It must never reach a tool schema, prompt, memory, log line, or trace; `tests/test_tools.py` and `tests/test_agent.py` assert this, along with the fact that `data_type` (`month`/`day`) is fixed backend-side and not model-controlled.
 
-**Response side-channel.** `chat_service.plant_disease_metadata` scrapes the returned `ToolContext` list for the `plant_diseases_detection` result and lifts `source`/`disease` onto `ChatResponse`. The endpoint uses `response_model_exclude_none=True`, so unused optional fields disappear from the payload.
+**Response side-channel.** `chat_service.plant_disease_metadata` scans the run's `ToolMessage`s (`AgentResult.tool_messages`) for the `plant_diseases_detection` result and lifts `source`/`disease` onto `ChatResponse`. The endpoint uses `response_model_exclude_none=True`, so unused optional fields disappear from the payload.
 
-**Providers.** LLM/ReNile/plant-disease are plain classes; ASR and TTS follow interface + factory + `providers/` (`ASR_PROVIDER` = `cohere` | `faster_whisper`). New speech backends go in `providers/<ASR|TTS>/providers/` and are wired in that subpackage's `factory.py` only.
+**Providers.** `providers/llm.py::create_chat_model` returns a `ChatOpenAI`; ReNile/plant-disease are plain classes; ASR follows interface + factory + `providers/` (`ASR_PROVIDER` = `cohere` | `faster_whisper`). New ASR backends go in `providers/ASR/providers/` and are wired in its `factory.py` only.
 
 **Config.** `core/config.py` declares every field with an explicit `alias` and **no defaults**, so a key missing from `.env` fails validation at startup. Adding a setting means touching the `Settings` field, `.env`, and `.env.example` in the same change. `get_settings()` is `lru_cache`d — never read env vars directly elsewhere.
 

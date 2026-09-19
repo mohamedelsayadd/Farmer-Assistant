@@ -12,8 +12,9 @@ class ChatRequest(BaseModel):
 
     jwt: str = Field(min_length=1)
     conversation_id: str = Field(min_length=1)
-    message: str = Field(min_length=1,max_length=7500)
+    message: str = Field(min_length=1, max_length=7500)
     image: UploadedImage | None = Field(default=None, exclude=True)
+    transcript: str | None = Field(default=None, exclude=True)
 
 
 class ChatResponse(BaseModel):
@@ -21,5 +22,4 @@ class ChatResponse(BaseModel):
     message: str
     source: str | None = None
     disease: str | None = None
-    audio_wav_base64: str | None = None
-    audio_content_type: str | None = None
+    transcript: str | None = None

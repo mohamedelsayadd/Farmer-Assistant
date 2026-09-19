@@ -12,7 +12,7 @@ from services.wav_processor import transcribe_wav_file
 IMAGE_UPLOAD_MESSAGE = "[The user uploaded a plant image with no text. Diagnose the uploaded plant image.]"
 
 
-async def parse_chat_request(request: Request) -> tuple[ChatRequest, bool]:
+async def parse_chat_request(request: Request) -> ChatRequest:
     content_type = request.headers.get("content-type", "").lower()
     if content_type.startswith(("multipart/form-data", "application/x-www-form-urlencoded")):
         return await parse_form_chat_request(request)
@@ -23,10 +23,10 @@ async def parse_chat_request(request: Request) -> tuple[ChatRequest, bool]:
         raise HTTPException(status_code=422, detail="Request body must be valid JSON.") from exc
     if not isinstance(payload, dict):
         raise HTTPException(status_code=422, detail="Request body must be a JSON object.")
-    return validate_chat_request(payload), False
+    return validate_chat_request(payload)
 
 
-async def parse_form_chat_request(request: Request) -> tuple[ChatRequest, bool]:
+async def parse_form_chat_request(request: Request) -> ChatRequest:
     form = await request.form()
     jwt = get_form_str(form, "jwt")
     conversation_id = get_form_str(form, "conversation_id")
@@ -42,8 +42,9 @@ async def parse_form_chat_request(request: Request) -> tuple[ChatRequest, bool]:
     if not has_audio and not has_message and not has_image:
         raise HTTPException(status_code=422, detail="Send message, wav_file, image_file, or message with image_file.")
 
+    transcript = None
     if has_audio:
-        message = await transcribe_wav_file(request, wav_file)
+        message = transcript = await transcribe_wav_file(request, wav_file)
     image = await read_image_file(request, image_file) if has_image else None
     if has_image and has_message:
         message = message.strip()
@@ -51,7 +52,9 @@ async def parse_form_chat_request(request: Request) -> tuple[ChatRequest, bool]:
         message = IMAGE_UPLOAD_MESSAGE
 
     payload = {"jwt": jwt, "conversation_id": conversation_id, "message": message or "", "image": image}
-    return validate_chat_request(payload), has_audio
+    if transcript is not None:
+        payload["transcript"] = transcript
+    return validate_chat_request(payload)
 
 
 def validate_chat_request(payload: dict[str, Any]) -> ChatRequest:

@@ -6,19 +6,19 @@
 
 Arabic-first AI agent for the [ReNile-IoT](https://renile-iot.com) platform, answering farmers' questions in Egyptian Arabic or English via text, voice, or plant photos.
 
-Built on FastAPI, the agent calls backend tools to read live and historical ReNile device data, diagnoses plant diseases from images, and supports speech in and out.
+Built on FastAPI, the agent calls backend tools to read live and historical ReNile device data, diagnoses plant diseases from images, and accepts voice questions (speech-to-text).
 
 ## Features
 
 - 🌱 **Plant disease diagnosis** — send a leaf photo, get the likely disease and advice.
 - 📊 **Farm readings** — current device status, plus daily summaries and hourly history.
-- 🎙️ **Voice in and out** — send a WAV, get a spoken reply back.
+- 🎙️ **Voice questions** — send a WAV, it is transcribed and answered in text.
 - 🧠 **Conversation memory** — Redis-backed follow-ups, with a separate cache for tool results.
 - 🌍 **Bilingual** — replies in Egyptian Arabic or English, matching how the user wrote.
 
 ## Stack
 
-Python 3.12 · FastAPI · OpenAI-compatible LLM · Redis · HTTPX · Cohere Transcribe Arabic (ASR, Faster-Whisper fallback) · VoiceTut (TTS) · Streamlit · pytest
+Python 3.12 · FastAPI · LangChain `create_agent` · OpenAI-compatible LLM · Redis · HTTPX · Cohere Transcribe Arabic (ASR, Faster-Whisper fallback) · Langfuse · pytest
 
 ## Quick Start
 
@@ -37,13 +37,13 @@ Check it's alive:
 curl http://localhost:8000/health   # {"status":"ok"}
 ```
 
-Then try it in the browser with the manual tester — enter the backend URL and your ReNile JWT in the sidebar:
+Then try it in the browser with the manual tester (text, plant image, or recorded voice). Enter the API URL and your ReNile JWT at the top:
 
 ```bash
-uv run streamlit run streamlit_app.py
+uv run streamlit run streamlit_app.py  # http://localhost:8501
 ```
 
-> **Note:** ASR/TTS models load at startup, so the first boot is slow. The Cohere ASR weights are gated on Hugging Face — accept the model conditions and set `HF_TOKEN` (or run `hf auth login`) first.
+> **Note:** ASR models load at startup, so the first boot is slow. The Cohere ASR weights are gated on Hugging Face — accept the model conditions and set `HF_TOKEN` (or run `hf auth login`) first.
 
 ## API
 
@@ -74,13 +74,11 @@ One endpoint: `POST /api/v1/chat`. Full reference in [Farmer-Assistant-API-Doc.m
   "conversation_id": "conversation-123",
   "message": "...",
   "disease": "...",
-  "source": "...",
-  "audio_wav_base64": "...",
-  "audio_content_type": "audio/wav"
+  "source": "..."
 }
 ```
 
-`disease` and `source` appear only for image diagnoses; the audio fields only for voice requests.
+`disease` and `source` appear only for image diagnoses. Replies are always text, including for voice requests.
 
 The JWT is used by the backend to call ReNile APIs. It is never exposed to the LLM, prompts, memory, or logs.
 
@@ -97,13 +95,12 @@ The ones you'll usually change:
 | `RENILE_API_BASE_URL` | ReNile platform API. |
 | `PLANT_DISEASE_API_BASE_URL` | Plant disease prediction service. |
 | `ASR_PROVIDER` | `cohere` (default) or `faster_whisper`. |
-| `ASR_DEVICE`, `TTS_DEVICE` | Where the speech models run, e.g. `cuda:0` or `cpu`. |
-| `CHAT_API_BASE_URL` | Backend URL used by the Streamlit tester. |
+| `ASR_DEVICE` | Where the speech model runs, e.g. `cuda:0` or `cpu`. |
 
 ## How It Works
 
 ```
-request ──▶ parse (JSON / audio / image) ──▶ agent loop ──▶ response (+ TTS)
+request ──▶ parse (JSON / audio / image) ──▶ create_agent ──▶ response
                                                │
                                                ├─ current readings  ──┐
                                                ├─ historical data   ──┼─▶ ReNile API
@@ -111,7 +108,7 @@ request ──▶ parse (JSON / audio / image) ──▶ agent loop ──▶ re
                                                └─ plant diagnosis   ───▶ Disease API
 ```
 
-The agent runs a bounded tool-calling loop against the LLM. Historical questions always resolve a real device ID first, and tool results are cached in Redis so repeat questions don't re-hit ReNile. Readings before 2026-01-01 are out of range, and off-topic questions are declined.
+The agent is a LangChain `create_agent` with a bounded tool-calling loop (at most 4 tool rounds). Historical questions always resolve a real device ID first, and tool results are cached in Redis so repeat questions don't re-hit ReNile. Readings before 2026-01-01 are out of range, and off-topic questions are declined.
 
 ## Development
 

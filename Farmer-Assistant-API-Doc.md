@@ -10,7 +10,6 @@ Local development:
 http://localhost:8000
 ```
 
-The Streamlit tester defaults to `CHAT_API_BASE_URL` when set, otherwise it uses its local default.
 
 ## Endpoint Summary
 
@@ -130,7 +129,7 @@ curl -X POST http://localhost:8000/api/v1/chat \
 1. Backend validates the WAV upload.
 2. Backend transcribes audio using the configured ASR provider.
 3. Transcribed text is sent through the normal chatbot flow.
-4. If enabled by request handling, the response can include generated WAV audio.
+4. The response is text only (no generated audio).
 
 ## Plant Image Request
 
@@ -192,9 +191,7 @@ Successful requests return HTTP `200`.
   "conversation_id": "conversation-1",
   "message": "Assistant response",
   "source": "yolo",
-  "disease": "potato early blight",
-  "audio_wav_base64": "UklGRg==",
-  "audio_content_type": "audio/wav"
+  "disease": "potato early blight"
 }
 ```
 
@@ -206,10 +203,9 @@ Successful requests return HTTP `200`.
 | `message` | string | No | Final chatbot response. |
 | `source` | string | Yes | Plant disease provider source such as `yolo`, `kindwise`, or `gemini`. Included only for plant image diagnosis when returned by the plant disease API. |
 | `disease` | string | Yes | Disease name returned by the plant disease API. Included only for plant image diagnosis when a disease is detected. |
-| `audio_wav_base64` | string | Yes | Base64 WAV response audio, when generated. |
-| `audio_content_type` | string | Yes | Audio content type, usually `audio/wav`, when audio is generated. |
+| `transcript` | string | Yes | ASR transcription of the uploaded `wav_file`. Included only for voice requests. |
 
-Normal text and farm reading responses usually omit `source`, `disease`, `audio_wav_base64`, and `audio_content_type`.
+Normal text and farm reading responses omit `source`, `disease`, and `transcript`. Voice requests are answered with text only; the service does not generate audio.
 
 ### Text Response Example
 

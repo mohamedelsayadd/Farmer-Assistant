@@ -57,18 +57,9 @@ class Settings(BaseSettings):
     asr_dtype: str = Field(alias="ASR_DTYPE")
     asr_max_new_tokens: int = Field(alias="ASR_MAX_NEW_TOKENS", gt=0)
 
-    tts_provider: str = Field(alias="TTS_PROVIDER")
-    tts_model: str = Field(alias="TTS_MODEL")
-    tts_device: str = Field(alias="TTS_DEVICE")
-    tts_dtype: str = Field(alias="TTS_DTYPE")
-    tts_speaker: str = Field(alias="TTS_SPEAKER")
-    tts_num_step: int = Field(alias="TTS_NUM_STEP", gt=0)
-    tts_guidance_scale: float = Field(alias="TTS_GUIDANCE_SCALE", gt=0)
-    tts_speed: float = Field(alias="TTS_SPEED", gt=0)
-    
-    langfuse_secret_key : str = Field(alias = "LANGFUSE_SECRET_KEY")
-    langfuse_public_key : str = Field(alias = "LANGFUSE_PUBLIC_KEY")
-    langfuse_base_url : str = Field(alias = "LANGFUSE_BASE_URL")
+    langfuse_secret_key: str = Field(alias="LANGFUSE_SECRET_KEY")
+    langfuse_public_key: str = Field(alias="LANGFUSE_PUBLIC_KEY")
+    langfuse_base_url: str = Field(alias="LANGFUSE_BASE_URL")
 
 
 @lru_cache

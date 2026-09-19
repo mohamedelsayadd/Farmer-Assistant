@@ -1,6 +1,8 @@
 import pytest
 
-from agent.graph import AgentResult, ToolContext
+from langchain_core.messages import ToolMessage
+
+from agent.agent import AgentResult
 from models.schemas.chat import ChatRequest
 from services.chat_service import ChatService
 
@@ -25,7 +27,7 @@ class FakeAgent:
         assert image is None
         return AgentResult(
             response="درجة الحرارة ٢٢.",
-            tool_contexts=[ToolContext(tool_name="get_current_readings", content='{"devices": []}')],
+            tool_messages=[ToolMessage('{"devices": []}', name="get_current_readings", tool_call_id="call-1")],
         )
 
 
@@ -34,10 +36,11 @@ class FakePlantAgent:
         assert image is not None
         return AgentResult(
             response="تم تشخيص المرض.",
-            tool_contexts=[
-                ToolContext(
-                    tool_name="plant_diseases_detection",
-                    content='{"source": "yolo", "disease": "potato early blight"}',
+            tool_messages=[
+                ToolMessage(
+                    '{"source": "yolo", "disease": "potato early blight"}',
+                    name="plant_diseases_detection",
+                    tool_call_id="call-1",
                 )
             ],
         )

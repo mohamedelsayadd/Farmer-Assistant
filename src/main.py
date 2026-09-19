@@ -1,11 +1,11 @@
-import asyncio
 from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
 from fastapi import FastAPI
+from langfuse.langchain import CallbackHandler
 from redis.asyncio import Redis
 
-from agent.graph import FarmerAssistantAgent
+from agent.agent import FarmerAssistantAgent
 from api.v1.endpoints.chat import router as chat_router
 from core.config import get_settings
 from core.logging import configure_logging
@@ -13,8 +13,7 @@ from core.observability import create_langfuse_client
 from memory.redis_memory import RedisMemory
 from memory.tool_cache import ToolCache
 from providers.ASR.factory import create_asr_provider
-from providers.TTS.factory import create_text_to_speech_provider
-from providers.llm import LLMProvider
+from providers.llm import create_chat_model
 from providers.plant_disease_client import PlantDiseaseClient
 from providers.renile_client import ReNileClient
 from services.chat_service import ChatService
@@ -25,7 +24,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings = get_settings()
     configure_logging(settings.log_level)
 
-    # tracing: constructing the client arms the langfuse openai drop-in
+    # tracing: the langchain callback handler reports agent runs to this client
     langfuse = create_langfuse_client(settings)
     app.state.langfuse = langfuse
 
@@ -41,24 +40,26 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         ttl_seconds=settings.redis_memory_ttl_seconds,
         max_messages=settings.redis_memory_max_messages,
     )
-    llm = LLMProvider(settings)
     renile_client = ReNileClient(settings)
     plant_disease_client = PlantDiseaseClient(settings)
     asr = create_asr_provider(settings)
-    text_to_speech = create_text_to_speech_provider(settings)
     await asr.load_model()
-   #await asyncio.gather(asr.load_model(), text_to_speech.load_model())
 
     app.state.redis = redis
     app.state.tool_cache_redis = tool_cache_redis
     app.state.asr = asr
-    app.state.text_to_speech = text_to_speech
     app.state.asr_max_audio_bytes = settings.asr_max_audio_bytes
     app.state.plant_disease_max_image_bytes = settings.plant_disease_max_image_bytes
     tool_cache = ToolCache(redis=tool_cache_redis, ttl_seconds=settings.redis_tool_cache_ttl_seconds)
     app.state.chat_service = ChatService(
         memory=memory,
-        agent=FarmerAssistantAgent(llm, renile_client, tool_cache, plant_disease_client),
+        agent=FarmerAssistantAgent(
+            create_chat_model(settings),
+            renile_client,
+            tool_cache,
+            plant_disease_client,
+            callbacks=[CallbackHandler()],
+        ),
     )
 
     try:

@@ -1,7 +1,14 @@
+import json
 import logging
-from typing import Any
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
+from typing import Annotated, Any
+
+from langchain.tools import ToolRuntime, tool
+from pydantic import Field
 
 from core.logging import json_preview
+from memory.tool_cache import ToolCache
 from models.schemas.chat import UploadedImage
 from providers.plant_disease_client import PlantDiseaseClient
 from providers.renile_client import ReNileClient
@@ -12,243 +19,176 @@ logger = logging.getLogger(__name__)
 ToolResult = dict[str, Any] | list[dict[str, Any]]
 
 
-OPENAI_TOOLS: list[dict[str, Any]] = [
-    {
-        "type": "function",
-        "function": {
-            "name": "plant_diseases_detection",
-            "description": "Diagnose an uploaded plant image for disease. Use when the current user request includes a plant image upload.",
-            "parameters": {
-                "type": "object",
-                "properties": {},
-                "required": [],
-                "additionalProperties": False,
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "get_current_readings",
-            "description": "Get the latest farm sensor readings. Use for current, now, latest, or live readings questions.",
-            "parameters": {
-                "type": "object",
-                "properties": {},
-                "required": [],
-                "additionalProperties": False,
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "get_devices_ids",
-            "description": "Get the user's available farm devices and their IDs. Required before answering historical readings questions.",
-            "parameters": {
-                "type": "object",
-                "properties": {},
-                "required": [],
-                "additionalProperties": False,
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "get_last_duration_summary",
-            "description": "Get historical daily summary readings for a selected device and period. Use only after get_devices_ids returned the real device_id. NEVER pass a device name as device_id.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "device_id": {
-                        "type": "string",
-                        "description": "Real device_id copied from get_devices_ids context. This must be an ID, not the device name.",
-                    },
-                    "start_time": {
-                        "type": "string",
-                        "description": "Start time in format YYYY-MM-DD HH:mm, resolved using today's date from the system prompt.",
-                    },
-                },
-                "required": ["device_id", "start_time"],
-                "additionalProperties": False,
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "get_specific_time_readings",
-            "description": "Get historical hourly readings for a selected device on a specific previous day or time. Use only after get_devices_ids returned the real device_id. NEVER pass a device name as device_id.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "device_id": {
-                        "type": "string",
-                        "description": "Real device_id copied from get_devices_ids context. This must be an ID, not the device name.",
-                    },
-                    "start_time": {
-                        "type": "string",
-                        "description": "Specific day start time in format YYYY-MM-DD HH:mm, resolved using today's date from the system prompt.",
-                    },
-                },
-                "required": ["device_id", "start_time"],
-                "additionalProperties": False,
-            },
-        },
-    },
+@dataclass(frozen=True)
+class AgentContext:
+    """Per-request runtime context. Injected into tools and never shown to the model."""
+
+    conversation_id: str
+    jwt: str
+    renile_client: ReNileClient
+    tool_cache: ToolCache
+    plant_disease_client: PlantDiseaseClient | None = None
+    image: UploadedImage | None = None
+
+
+Runtime = ToolRuntime[AgentContext]
+DeviceId = Annotated[
+    str,
+    Field(description="Real device_id copied from get_devices_ids context. This must be an ID, not the device name."),
 ]
 
 
-async def execute_current_readings_tool(jwt: str, renile_client: ReNileClient) -> dict[str, Any]:
-    logger.info("tool_current_readings_started")
-    current_readings = await renile_client.get_current_readings(jwt)
-    logger.info("tool_current_readings_completed result_preview=%s", json_preview(current_readings))
-    return current_readings
-
-
-async def execute_devices_ids_tool(jwt: str, renile_client: ReNileClient) -> list[dict[str, Any]]:
-    logger.info("tool_devices_ids_started")
-    devices_ids = await renile_client.get_devices_ids(jwt)
-    logger.info("tool_devices_ids_completed result_preview=%s", json_preview(devices_ids))
-    return devices_ids
-
-
-async def execute_last_duration_summary_tool(
-    jwt: str,
-    renile_client: ReNileClient,
-    device_id: str,
-    start_time: str,
-) -> dict[str, Any]:
-    logger.info("tool_last_duration_summary_started device_id=%s start_time=%s data_type=month", device_id, start_time)
-    raw_summary = await renile_client.get_last_duration_summary(jwt=jwt, device_id=device_id, start_time=start_time)
-    daily_rows = process_daily_sensor_response(raw_summary)
-    summary = {"device_id": device_id, "start_time": start_time, "data_type": "month", "daily_rows": daily_rows}
-    logger.info(
-        "tool_last_duration_summary_completed sensors=%s rows=%s result_preview=%s",
-        len(raw_summary),
-        len(daily_rows),
-        json_preview(summary),
-    )
-    return summary
-
-
-async def execute_specific_time_readings_tool(
-    jwt: str,
-    renile_client: ReNileClient,
-    device_id: str,
-    start_time: str,
-) -> dict[str, Any]:
-    logger.info("tool_specific_time_readings_started device_id=%s start_time=%s data_type=day", device_id, start_time)
-    raw_readings = await renile_client.get_specific_time_readings(jwt=jwt, device_id=device_id, start_time=start_time)
-    hourly_rows = process_hourly_sensor_response(raw_readings)
-    readings = {"device_id": device_id, "start_time": start_time, "data_type": "day", "hourly_rows": hourly_rows}
-    logger.info(
-        "tool_specific_time_readings_completed sensors=%s rows=%s result_preview=%s",
-        len(raw_readings),
-        len(hourly_rows),
-        json_preview(readings),
-    )
-    return readings
-
-
-async def execute_plant_diseases_detection_tool(
-    plant_disease_client: PlantDiseaseClient,
-    image: UploadedImage,
-) -> dict[str, Any]:
+@tool(
+    description="Diagnose an uploaded plant image for disease. "
+    "Use when the current user request includes a plant image upload."
+)
+async def plant_diseases_detection(runtime: Runtime) -> str:
+    context = runtime.context
+    if context.plant_disease_client is None or context.image is None:
+        raise ValueError("plant_diseases_detection requires an uploaded image")
+    image = context.image
     logger.info("tool_plant_diseases_detection_started filename=%s bytes=%s", image.filename, len(image.content))
-    prediction = await plant_disease_client.predict(
+    # Plant-disease results bypass the tool cache: every upload is a new image.
+    prediction = await context.plant_disease_client.predict(
         image_bytes=image.content,
         filename=image.filename,
         content_type=image.content_type,
     )
-    logger.info("tool_plant_diseases_detection_completed result_preview=%s", json_preview(prediction))
-    return prediction
+    return _dump("plant_diseases_detection", prediction)
 
 
-async def execute_historical_readings_tool(
-    jwt: str,
-    device_id: str | None = None,
-    metric: str | None = None,
-    from_date: str | None = None,
-    to_date: str | None = None,
-) -> dict[str, Any]:
-    logger.info(
-        "tool_historical_readings_started device_id=%s metric=%s from_date=%s to_date=%s",
-        device_id,
-        metric,
-        from_date,
-        to_date,
-    )
-    _ = jwt
-    selected_metric = metric or "temperature"
-    historical_readings = {
-        "device_id": device_id or "dummy-device-1",
-        "metric": selected_metric,
-        "from_date": from_date or "2026-06-18",
-        "to_date": to_date or "2026-06-19",
-        "values": [
-            {"timestamp": "2026-06-18T10:00:00Z", "value": 28.1},
-            {"timestamp": "2026-06-19T10:00:00Z", "value": 27.5},
-        ],
-        "note": "dummy data until the real ReNile API is connected",
-    }
-    logger.info("tool_historical_readings_completed result=%s", json_preview(historical_readings))
-    return historical_readings
+@tool(description="Get the latest farm sensor readings. Use for current, now, latest, or live readings questions.")
+async def get_current_readings(runtime: Runtime) -> str:
+    context = runtime.context
+    result = await _cached(context, "get_current_readings", {}, lambda: context.renile_client.get_current_readings(context.jwt))
+    return _dump("get_current_readings", result)
 
 
-async def execute_tool(
-    name: str,
-    jwt: str,
+@tool(
+    description="Get the user's available farm devices and their IDs. "
+    "Required before answering historical readings questions."
+)
+async def get_devices_ids(runtime: Runtime) -> str:
+    return _dump("get_devices_ids", await _devices(runtime.context))
+
+
+@tool(
+    description="Get historical daily summary readings for a selected device and period. "
+    "Use only after get_devices_ids returned the real device_id. NEVER pass a device name as device_id."
+)
+async def get_last_duration_summary(
+    device_id: DeviceId,
+    start_time: Annotated[
+        str,
+        Field(description="Start time in format YYYY-MM-DD HH:mm, resolved using today's date from the system prompt."),
+    ],
+    runtime: Runtime,
+) -> str:
+    async def fetch(resolved_id: str) -> dict[str, Any]:
+        raw = await runtime.context.renile_client.get_last_duration_summary(
+            jwt=runtime.context.jwt, device_id=resolved_id, start_time=start_time
+        )
+        rows = process_daily_sensor_response(raw)
+        return {"device_id": resolved_id, "start_time": start_time, "data_type": "month", "daily_rows": rows}
+
+    return await _historical("get_last_duration_summary", runtime.context, device_id, start_time, fetch)
+
+
+@tool(
+    description="Get historical hourly readings for a selected device on a specific previous day or time. "
+    "Use only after get_devices_ids returned the real device_id. NEVER pass a device name as device_id."
+)
+async def get_specific_time_readings(
+    device_id: DeviceId,
+    start_time: Annotated[
+        str,
+        Field(
+            description="Specific day start time in format YYYY-MM-DD HH:mm, "
+            "resolved using today's date from the system prompt."
+        ),
+    ],
+    runtime: Runtime,
+) -> str:
+    async def fetch(resolved_id: str) -> dict[str, Any]:
+        raw = await runtime.context.renile_client.get_specific_time_readings(
+            jwt=runtime.context.jwt, device_id=resolved_id, start_time=start_time
+        )
+        rows = process_hourly_sensor_response(raw)
+        return {"device_id": resolved_id, "start_time": start_time, "data_type": "day", "hourly_rows": rows}
+
+    return await _historical("get_specific_time_readings", runtime.context, device_id, start_time, fetch)
+
+
+TOOLS = [
+    plant_diseases_detection,
+    get_current_readings,
+    get_devices_ids,
+    get_last_duration_summary,
+    get_specific_time_readings,
+]
+
+
+async def _historical(
+    tool_name: str,
+    context: AgentContext,
+    raw_device_id: str,
+    start_time: str,
+    fetch: Callable[[str], Awaitable[dict[str, Any]]],
+) -> str:
+    # The model often passes a device name or list ordinal instead of an _id. Resolve it
+    # against the device list; if that fails, hand the list back so the model re-asks.
+    devices = await _devices(context)
+    resolved_id = resolve_device_id(str(raw_device_id).strip(), devices) if isinstance(devices, list) else None
+    if resolved_id is None:
+        logger.warning("historical_device_resolution_failed raw_device_id=%s", raw_device_id)
+        return _dump(tool_name, devices)
+
+    arguments = {"device_id": resolved_id, "start_time": start_time}
+    return _dump(tool_name, await _cached(context, tool_name, arguments, lambda: fetch(resolved_id)))
+
+
+async def _devices(context: AgentContext) -> Any:
+    return await _cached(context, "get_devices_ids", {}, lambda: context.renile_client.get_devices_ids(context.jwt))
+
+
+async def _cached(
+    context: AgentContext,
+    tool_name: str,
     arguments: dict[str, Any],
-    renile_client: ReNileClient,
-    plant_disease_client: PlantDiseaseClient | None = None,
-    image: UploadedImage | None = None,
+    fetch: Callable[[], Awaitable[ToolResult]],
 ) -> ToolResult:
-    logger.info("tool_dispatch_started tool_name=%s arguments=%s", name, json_preview(arguments))
-    if name == "get_current_readings":
-        tool_result = await execute_current_readings_tool(jwt=jwt, renile_client=renile_client)
-        logger.info("tool_dispatch_completed tool_name=%s", name)
-        return tool_result
-    if name == "get_devices_ids":
-        tool_result = await execute_devices_ids_tool(jwt=jwt, renile_client=renile_client)
-        logger.info("tool_dispatch_completed tool_name=%s", name)
-        return tool_result
-    if name == "get_last_duration_summary":
-        tool_result = await execute_last_duration_summary_tool(
-            jwt=jwt,
-            renile_client=renile_client,
-            device_id=arguments["device_id"],
-            start_time=arguments["start_time"],
-        )
-        logger.info("tool_dispatch_completed tool_name=%s", name)
-        return tool_result
-    if name == "get_specific_time_readings":
-        tool_result = await execute_specific_time_readings_tool(
-            jwt=jwt,
-            renile_client=renile_client,
-            device_id=arguments["device_id"],
-            start_time=arguments["start_time"],
-        )
-        logger.info("tool_dispatch_completed tool_name=%s", name)
-        return tool_result
-    if name == "plant_diseases_detection":
-        if plant_disease_client is None or image is None:
-            raise ValueError("plant_diseases_detection requires an uploaded image")
-        tool_result = await execute_plant_diseases_detection_tool(
-            plant_disease_client=plant_disease_client,
-            image=image,
-        )
-        logger.info("tool_dispatch_completed tool_name=%s", name)
-        return tool_result
-    if name == "get_historical_readings":
-        tool_result = await execute_historical_readings_tool(
-            jwt=jwt,
-            device_id=arguments.get("device_id"),
-            metric=arguments.get("metric"),
-            from_date=arguments.get("from_date"),
-            to_date=arguments.get("to_date"),
-        )
-        logger.info("tool_dispatch_completed tool_name=%s", name)
-        return tool_result
-    logger.warning("tool_dispatch_unknown_tool tool_name=%s", name)
-    raise ValueError(f"Unknown tool: {name}")
+    cached = await context.tool_cache.get(conversation_id=context.conversation_id, tool_name=tool_name, arguments=arguments)
+    if cached is not None:
+        return cached
+    result = await fetch()
+    await context.tool_cache.set(
+        conversation_id=context.conversation_id, tool_name=tool_name, arguments=arguments, result=result
+    )
+    return result
+
+
+def resolve_device_id(raw_device_id: str, devices: list[dict[str, Any]]) -> str | None:
+    """Map a raw model value to a real device _id: exact id, then 1-based ordinal, then case-folded name."""
+    if not raw_device_id:
+        return None
+    for device in devices:
+        device_id = str(device.get("_id", "")).strip()
+        if raw_device_id == device_id:
+            return device_id
+
+    # Enumerate the full array: the model numbers the list it was shown verbatim,
+    # so skipping entries here would shift indices against its numbering.
+    lowered_raw_device_id = raw_device_id.casefold()
+    for index, device in enumerate(devices, start=1):
+        device_name = str(device.get("name", "")).strip()
+        device_id = str(device.get("_id", "")).strip()
+        if not device_id:
+            continue
+        if raw_device_id == str(index) or lowered_raw_device_id == device_name.casefold():
+            return device_id
+    return None
+
+
+def _dump(tool_name: str, result: Any) -> str:
+    logger.info("tool_call_completed tool_name=%s result_preview=%s", tool_name, json_preview(result))
+    return json.dumps(result, ensure_ascii=False)

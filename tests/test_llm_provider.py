@@ -1,124 +1,46 @@
 from types import SimpleNamespace
 
-import pytest
+from langchain_core.messages import HumanMessage
 
-from providers import llm as llm_module
-from providers.llm import LLMProvider
-
-
-class FakeCompletions:
-    def __init__(self) -> None:
-        self.kwargs = None
-        self.response_content = "تمام"
-
-    async def create(self, **kwargs):
-        self.kwargs = kwargs
-        message = SimpleNamespace(content=self.response_content, tool_calls=[])
-        choice = SimpleNamespace(message=message, finish_reason="stop")
-        return SimpleNamespace(choices=[choice])
+from agent.agent import strip_thinking
+from providers.llm import create_chat_model
 
 
-class FakeAsyncOpenAI:
-    last_instance = None
-
-    def __init__(self, *, api_key: str, base_url: str) -> None:
-        self.api_key = api_key
-        self.base_url = base_url
-        self.completions = FakeCompletions()
-        self.chat = SimpleNamespace(completions=self.completions)
-        FakeAsyncOpenAI.last_instance = self
-
-
-@pytest.mark.asyncio
-async def test_llm_provider_sends_generation_settings(monkeypatch) -> None:
-    monkeypatch.setattr(llm_module, "AsyncOpenAI", FakeAsyncOpenAI)
-    settings = SimpleNamespace(
+def _settings(enable_thinking: bool = False) -> SimpleNamespace:
+    return SimpleNamespace(
         llm_api_key="EMPTY",
         llm_base_url="http://localhost:5000/v1",
         llm_model="Qwen/Qwen3.6-27B-int4-AutoRound",
-        llm_enable_thinking=False,
+        llm_enable_thinking=enable_thinking,
         llm_temperature=0.2,
         llm_max_tokens=1024,
         llm_top_p=0.8,
         llm_top_k=20,
     )
-    provider = LLMProvider(settings)
-
-    await provider.chat([{"role": "user", "content": "السلام عليكم"}])
-
-    request_kwargs = FakeAsyncOpenAI.last_instance.completions.kwargs
-    assert request_kwargs["model"] == "Qwen/Qwen3.6-27B-int4-AutoRound"
-    assert request_kwargs["temperature"] == 0.2
-    assert request_kwargs["max_tokens"] == 1024
-    assert request_kwargs["top_p"] == 0.8
-    assert request_kwargs["extra_body"] == {
-        "top_k": 20,
-        "chat_template_kwargs": {
-            "enable_thinking": False,
-        },
-    }
 
 
-@pytest.mark.asyncio
-async def test_llm_provider_keeps_tool_choice_when_tools_are_passed(monkeypatch) -> None:
-    monkeypatch.setattr(llm_module, "AsyncOpenAI", FakeAsyncOpenAI)
-    settings = SimpleNamespace(
-        llm_api_key="EMPTY",
-        llm_base_url="http://localhost:5000/v1",
-        llm_model="Qwen/Qwen3.6-27B-int4-AutoRound",
-        llm_enable_thinking=False,
-        llm_temperature=0.2,
-        llm_max_tokens=1024,
-        llm_top_p=0.8,
-        llm_top_k=20,
-    )
-    provider = LLMProvider(settings)
-    tools = [{"type": "function", "function": {"name": "get_current_readings"}}]
+def test_chat_model_sends_generation_settings() -> None:
+    model = create_chat_model(_settings())  # type: ignore[arg-type]
 
-    await provider.chat([{"role": "user", "content": "الحرارة كام؟"}], tools=tools)
-
-    request_kwargs = FakeAsyncOpenAI.last_instance.completions.kwargs
-    assert request_kwargs["tools"] == tools
-    assert request_kwargs["tool_choice"] == "auto"
+    payload = model._get_request_payload([HumanMessage("السلام عليكم")])  # noqa: SLF001
+    assert model.openai_api_base == "http://localhost:5000/v1"
+    assert payload["model"] == "Qwen/Qwen3.6-27B-int4-AutoRound"
+    assert payload["temperature"] == 0.2
+    assert payload["max_completion_tokens"] == 1024
+    assert payload["top_p"] == 0.8
+    assert payload["extra_body"] == {"top_k": 20, "chat_template_kwargs": {"enable_thinking": False}}
 
 
-@pytest.mark.asyncio
-async def test_llm_provider_strips_qwen_thinking_content(monkeypatch) -> None:
-    monkeypatch.setattr(llm_module, "AsyncOpenAI", FakeAsyncOpenAI)
-    settings = SimpleNamespace(
-        llm_api_key="EMPTY",
-        llm_base_url="http://localhost:5000/v1",
-        llm_model="Qwen/Qwen3.6-27B-int4-AutoRound",
-        llm_enable_thinking=True,
-        llm_temperature=0.2,
-        llm_max_tokens=1024,
-        llm_top_p=0.8,
-        llm_top_k=20,
-    )
-    provider = LLMProvider(settings)
-    FakeAsyncOpenAI.last_instance.completions.response_content = "<think>reasoning</think>الإجابة النهائية"
+def test_chat_model_forwards_enable_thinking() -> None:
+    model = create_chat_model(_settings(enable_thinking=True))  # type: ignore[arg-type]
 
-    response = await provider.chat([{"role": "user", "content": "اشرح"}])
-
-    assert response.content == "الإجابة النهائية"
+    assert model._default_params["extra_body"]["chat_template_kwargs"] == {"enable_thinking": True}  # noqa: SLF001
 
 
-@pytest.mark.asyncio
-async def test_llm_provider_preserves_content_without_thinking_marker(monkeypatch) -> None:
-    monkeypatch.setattr(llm_module, "AsyncOpenAI", FakeAsyncOpenAI)
-    settings = SimpleNamespace(
-        llm_api_key="EMPTY",
-        llm_base_url="http://localhost:5000/v1",
-        llm_model="Qwen/Qwen3.6-27B-int4-AutoRound",
-        llm_enable_thinking=False,
-        llm_temperature=0.2,
-        llm_max_tokens=1024,
-        llm_top_p=0.8,
-        llm_top_k=20,
-    )
-    provider = LLMProvider(settings)
-    FakeAsyncOpenAI.last_instance.completions.response_content = "الإجابة النهائية"
+def test_strip_thinking_removes_qwen_reasoning() -> None:
+    assert strip_thinking("<think>reasoning</think>الإجابة النهائية") == "الإجابة النهائية"
 
-    response = await provider.chat([{"role": "user", "content": "اشرح"}])
 
-    assert response.content == "الإجابة النهائية"
+def test_strip_thinking_preserves_content_without_marker() -> None:
+    assert strip_thinking("الإجابة النهائية") == "الإجابة النهائية"
+    assert strip_thinking("") == ""

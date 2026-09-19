@@ -4,7 +4,6 @@ from fastapi.testclient import TestClient
 from api.v1.endpoints.chat import router
 from models.schemas.chat import ChatRequest, ChatResponse
 from providers.ASR.interface import ASRError
-from providers.TTS.interface import TextToSpeechError
 
 
 class FakeChatService:
@@ -35,37 +34,19 @@ class FakeASR:
         return self._text
 
 
-class FakeTextToSpeech:
-    def __init__(self, wav_bytes: bytes = b"fake-tts-wav", should_fail: bool = False) -> None:
-        self.requests: list[str] = []
-        self._wav_bytes = wav_bytes
-        self._should_fail = should_fail
-
-    async def synthesize_wav(self, text: str) -> bytes:
-        self.requests.append(text)
-        if self._should_fail:
-            raise TextToSpeechError("failed")
-        return self._wav_bytes
-
-
-def make_client(
-    asr: FakeASR | None = None,
-    text_to_speech: FakeTextToSpeech | None = None,
-) -> tuple[TestClient, FakeChatService, FakeTextToSpeech]:
+def make_client(asr: FakeASR | None = None) -> tuple[TestClient, FakeChatService]:
     app = FastAPI()
     app.include_router(router)
     chat_service = FakeChatService()
-    tts = text_to_speech or FakeTextToSpeech()
     app.state.chat_service = chat_service
     app.state.asr = asr or FakeASR()
-    app.state.text_to_speech = tts
     app.state.asr_max_audio_bytes = 1024
     app.state.plant_disease_max_image_bytes = 1024
-    return TestClient(app), chat_service, tts
+    return TestClient(app), chat_service
 
 
 def test_chat_endpoint_keeps_json_request_shape() -> None:
-    client, chat_service, tts = make_client()
+    client, chat_service = make_client()
 
     response = client.post(
         "/api/v1/chat",
@@ -84,33 +65,10 @@ def test_chat_endpoint_keeps_json_request_shape() -> None:
     assert chat_service.requests == [
         ChatRequest(jwt="runtime-jwt", conversation_id="conversation-1", message="درجة الحرارة كام؟")
     ]
-    assert tts.requests == []
 
 
-def test_chat_endpoint_accepts_multipart_wav_file() -> None:
-    client, chat_service, tts = make_client()
-
-    response = client.post(
-        "/api/v1/chat",
-        data={"jwt": "runtime-jwt", "conversation_id": "conversation-1"},
-        files={"wav_file": ("voice.wav", b"fake-wav", "audio/wav")},
-    )
-
-    assert response.status_code == 200
-    assert response.json() == {
-        "conversation_id": "conversation-1",
-        "message": "reply: درجة الحرارة كام؟",
-        "audio_wav_base64": "ZmFrZS10dHMtd2F2",
-        "audio_content_type": "audio/wav",
-    }
-    assert chat_service.requests == [
-        ChatRequest(jwt="runtime-jwt", conversation_id="conversation-1", message="درجة الحرارة كام؟")
-    ]
-    assert tts.requests == ["reply: درجة الحرارة كام؟"]
-
-
-def test_chat_endpoint_returns_text_only_when_tts_fails() -> None:
-    client, chat_service, tts = make_client(text_to_speech=FakeTextToSpeech(should_fail=True))
+def test_chat_endpoint_answers_multipart_wav_file_with_text_only() -> None:
+    client, chat_service = make_client()
 
     response = client.post(
         "/api/v1/chat",
@@ -122,15 +80,20 @@ def test_chat_endpoint_returns_text_only_when_tts_fails() -> None:
     assert response.json() == {
         "conversation_id": "conversation-1",
         "message": "reply: درجة الحرارة كام؟",
+        "transcript": "درجة الحرارة كام؟",
     }
     assert chat_service.requests == [
-        ChatRequest(jwt="runtime-jwt", conversation_id="conversation-1", message="درجة الحرارة كام؟")
+        ChatRequest(
+            jwt="runtime-jwt",
+            conversation_id="conversation-1",
+            message="درجة الحرارة كام؟",
+            transcript="درجة الحرارة كام؟",
+        )
     ]
-    assert tts.requests == ["reply: درجة الحرارة كام؟"]
 
 
 def test_chat_endpoint_accepts_form_text_message() -> None:
-    client, chat_service, _ = make_client()
+    client, chat_service = make_client()
 
     response = client.post(
         "/api/v1/chat",
@@ -148,7 +111,7 @@ def test_chat_endpoint_accepts_form_text_message() -> None:
 
 
 def test_chat_endpoint_accepts_multipart_image_file() -> None:
-    client, chat_service, _ = make_client()
+    client, chat_service = make_client()
 
     response = client.post(
         "/api/v1/chat",
@@ -174,7 +137,7 @@ def test_chat_endpoint_accepts_multipart_image_file() -> None:
 
 
 def test_chat_endpoint_rejects_multipart_with_message_and_wav_file() -> None:
-    client, _, _ = make_client()
+    client, _ = make_client()
 
     response = client.post(
         "/api/v1/chat",
@@ -191,7 +154,7 @@ def test_chat_endpoint_rejects_multipart_with_message_and_wav_file() -> None:
 
 
 def test_chat_endpoint_rejects_multipart_without_message_or_wav_file() -> None:
-    client, _, _ = make_client()
+    client, _ = make_client()
 
     response = client.post(
         "/api/v1/chat",
@@ -203,7 +166,7 @@ def test_chat_endpoint_rejects_multipart_without_message_or_wav_file() -> None:
 
 
 def test_chat_endpoint_accepts_multipart_with_message_and_image_file() -> None:
-    client, chat_service, _ = make_client()
+    client, chat_service = make_client()
 
     response = client.post(
         "/api/v1/chat",
@@ -230,7 +193,7 @@ def test_chat_endpoint_accepts_multipart_with_message_and_image_file() -> None:
 
 
 def test_chat_endpoint_rejects_multipart_with_wav_and_image_file() -> None:
-    client, _, _ = make_client()
+    client, _ = make_client()
 
     response = client.post(
         "/api/v1/chat",
@@ -246,7 +209,7 @@ def test_chat_endpoint_rejects_multipart_with_wav_and_image_file() -> None:
 
 
 def test_chat_endpoint_rejects_unsupported_image_type() -> None:
-    client, _, _ = make_client()
+    client, _ = make_client()
 
     response = client.post(
         "/api/v1/chat",
@@ -259,7 +222,7 @@ def test_chat_endpoint_rejects_unsupported_image_type() -> None:
 
 
 def test_chat_endpoint_rejects_empty_image() -> None:
-    client, _, _ = make_client()
+    client, _ = make_client()
 
     response = client.post(
         "/api/v1/chat",
@@ -272,7 +235,7 @@ def test_chat_endpoint_rejects_empty_image() -> None:
 
 
 def test_chat_endpoint_rejects_large_image() -> None:
-    client, _, _ = make_client()
+    client, _ = make_client()
 
     response = client.post(
         "/api/v1/chat",
@@ -285,7 +248,7 @@ def test_chat_endpoint_rejects_large_image() -> None:
 
 
 def test_chat_endpoint_rejects_non_wav_audio() -> None:
-    client, _, _ = make_client()
+    client, _ = make_client()
 
     response = client.post(
         "/api/v1/chat",
@@ -298,7 +261,7 @@ def test_chat_endpoint_rejects_non_wav_audio() -> None:
 
 
 def test_chat_endpoint_rejects_empty_transcription() -> None:
-    client, _, _ = make_client(asr=FakeASR(text=""))
+    client, _ = make_client(asr=FakeASR(text=""))
 
     response = client.post(
         "/api/v1/chat",
@@ -311,7 +274,7 @@ def test_chat_endpoint_rejects_empty_transcription() -> None:
 
 
 def test_chat_endpoint_returns_503_when_transcription_fails() -> None:
-    client, _, _ = make_client(asr=FakeASR(should_fail=True))
+    client, _ = make_client(asr=FakeASR(should_fail=True))
 
     response = client.post(
         "/api/v1/chat",

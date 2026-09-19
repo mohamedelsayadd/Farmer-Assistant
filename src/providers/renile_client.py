@@ -31,9 +31,6 @@ class ReNileClient:
         logger.info("renile_devices_ids_completed")
         return response
 
-    async def get_historical_readings(self, jwt: str, params: dict[str, Any]) -> dict[str, Any]:
-        return await self._get(self._historical_path, jwt, params)
-
     async def get_last_duration_summary(self, jwt: str, device_id: str, start_time: str) -> dict[str, Any]:
         logger.info(
             "renile_last_duration_summary_started path=%s device_id=%s start_time=%s data_type=month",

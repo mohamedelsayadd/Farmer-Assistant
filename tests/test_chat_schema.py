@@ -18,19 +18,5 @@ def test_chat_response_shape() -> None:
     }
 
 
-def test_chat_response_accepts_optional_audio() -> None:
-    response = ChatResponse(
-        conversation_id="conversation-1",
-        message="أهلا بيك",
-        audio_wav_base64="UklGRg==",
-        audio_content_type="audio/wav",
-    )
-
-    assert response.model_dump() == {
-        "conversation_id": "conversation-1",
-        "message": "أهلا بيك",
-        "source": None,
-        "disease": None,
-        "audio_wav_base64": "UklGRg==",
-        "audio_content_type": "audio/wav",
-    }
+def test_chat_response_has_no_audio_fields() -> None:
+    assert set(ChatResponse.model_fields) == {"conversation_id", "message", "source", "disease", "transcript"}

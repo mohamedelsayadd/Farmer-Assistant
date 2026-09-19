@@ -1,66 +1,56 @@
+import json
 import logging
+from types import SimpleNamespace
 
 import pytest
+from langchain_core.utils.function_calling import convert_to_openai_tool
 
 from agent.tools import (
-    OPENAI_TOOLS,
-    execute_current_readings_tool,
-    execute_devices_ids_tool,
-    execute_last_duration_summary_tool,
-    execute_plant_diseases_detection_tool,
-    execute_specific_time_readings_tool,
+    TOOLS,
+    AgentContext,
+    get_current_readings,
+    get_devices_ids,
+    get_last_duration_summary,
+    get_specific_time_readings,
+    plant_diseases_detection,
 )
+from conftest import FakeToolCache
 from models.schemas.chat import UploadedImage
 
+SCHEMAS = {schema["function"]["name"]: schema["function"] for schema in map(convert_to_openai_tool, TOOLS)}
 
-def test_tool_schemas_do_not_expose_jwt() -> None:
-    tool_payload = str(OPENAI_TOOLS).lower()
+
+def test_tool_schemas_do_not_expose_jwt_or_runtime() -> None:
+    tool_payload = json.dumps(SCHEMAS).lower()
 
     assert "jwt" not in tool_payload
     assert "authorization" not in tool_payload
+    assert "runtime" not in tool_payload
+    assert "image" not in json.dumps([schema["parameters"] for schema in SCHEMAS.values()]).lower()
 
 
-def test_current_readings_tool_has_no_agent_arguments() -> None:
-    current_tool = next(tool for tool in OPENAI_TOOLS if tool["function"]["name"] == "get_current_readings")
-
-    assert current_tool["function"]["parameters"]["properties"] == {}
-
-
-def test_devices_ids_tool_has_no_agent_arguments() -> None:
-    devices_tool = next(tool for tool in OPENAI_TOOLS if tool["function"]["name"] == "get_devices_ids")
-
-    assert devices_tool["function"]["parameters"]["properties"] == {}
+def test_exposed_tool_names() -> None:
+    assert set(SCHEMAS) == {
+        "plant_diseases_detection",
+        "get_current_readings",
+        "get_devices_ids",
+        "get_last_duration_summary",
+        "get_specific_time_readings",
+    }
 
 
-def test_plant_diseases_detection_tool_has_no_agent_arguments() -> None:
-    plant_tool = next(tool for tool in OPENAI_TOOLS if tool["function"]["name"] == "plant_diseases_detection")
-
-    assert plant_tool["function"]["parameters"]["properties"] == {}
-    assert "jwt" not in str(plant_tool).lower()
+@pytest.mark.parametrize("name", ["get_current_readings", "get_devices_ids", "plant_diseases_detection"])
+def test_argumentless_tools_have_no_agent_arguments(name: str) -> None:
+    assert SCHEMAS[name]["parameters"]["properties"] == {}
 
 
-def test_historical_readings_tool_is_not_exposed_to_agent() -> None:
-    tool_names = [tool["function"]["name"] for tool in OPENAI_TOOLS]
-
-    assert "get_historical_readings" not in tool_names
-
-
-def test_last_duration_summary_tool_schema_is_safe() -> None:
-    summary_tool = next(tool for tool in OPENAI_TOOLS if tool["function"]["name"] == "get_last_duration_summary")
-    parameters = summary_tool["function"]["parameters"]
+@pytest.mark.parametrize("name", ["get_last_duration_summary", "get_specific_time_readings"])
+def test_historical_tool_schemas_are_safe(name: str) -> None:
+    parameters = SCHEMAS[name]["parameters"]
 
     assert parameters["required"] == ["device_id", "start_time"]
+    assert set(parameters["properties"]) == {"device_id", "start_time"}
     assert "data_type" not in parameters["properties"]
-    assert "jwt" not in str(summary_tool).lower()
-
-
-def test_specific_time_readings_tool_schema_is_safe() -> None:
-    readings_tool = next(tool for tool in OPENAI_TOOLS if tool["function"]["name"] == "get_specific_time_readings")
-    parameters = readings_tool["function"]["parameters"]
-
-    assert parameters["required"] == ["device_id", "start_time"]
-    assert "data_type" not in parameters["properties"]
-    assert "jwt" not in str(readings_tool).lower()
 
 
 BACKEND_CURRENT_READINGS = {
@@ -136,49 +126,53 @@ class FakePlantDiseaseClient:
         }
 
 
-@pytest.mark.asyncio
-async def test_current_readings_tool_returns_backend_response_unchanged() -> None:
-    current_readings = await execute_current_readings_tool(
+def _runtime(tool_cache: FakeToolCache | None = None, image: UploadedImage | None = None) -> SimpleNamespace:
+    context = AgentContext(
+        conversation_id="conversation-1",
         jwt="runtime-jwt",
         renile_client=FakeReNileClient(),  # type: ignore[arg-type]
+        tool_cache=tool_cache or FakeToolCache(),  # type: ignore[arg-type]
+        plant_disease_client=FakePlantDiseaseClient(),  # type: ignore[arg-type]
+        image=image,
     )
+    return SimpleNamespace(context=context)
 
-    assert current_readings == BACKEND_CURRENT_READINGS
+
+async def test_current_readings_tool_returns_backend_response_unchanged() -> None:
+    result = await get_current_readings.coroutine(runtime=_runtime())
+
+    assert json.loads(result) == BACKEND_CURRENT_READINGS
 
 
-@pytest.mark.asyncio
 async def test_current_readings_tool_logs_do_not_include_jwt(caplog: pytest.LogCaptureFixture) -> None:
     caplog.set_level(logging.INFO)
 
-    await execute_current_readings_tool(
-        jwt="runtime-jwt",
-        renile_client=FakeReNileClient(),  # type: ignore[arg-type]
-    )
+    await get_current_readings.coroutine(runtime=_runtime())
 
     assert "runtime-jwt" not in caplog.text
-    assert "tool_current_readings_completed" in caplog.text
+    assert "tool_call_completed tool_name=get_current_readings" in caplog.text
 
 
-@pytest.mark.asyncio
+async def test_current_readings_tool_caches_result_per_conversation() -> None:
+    tool_cache = FakeToolCache()
+
+    await get_current_readings.coroutine(runtime=_runtime(tool_cache))
+
+    assert tool_cache.stored_results == [("conversation-1", "get_current_readings", {}, BACKEND_CURRENT_READINGS)]
+
+
 async def test_devices_ids_tool_returns_backend_response_unchanged() -> None:
-    devices_ids = await execute_devices_ids_tool(
-        jwt="runtime-jwt",
-        renile_client=FakeReNileClient(),  # type: ignore[arg-type]
-    )
+    result = await get_devices_ids.coroutine(runtime=_runtime())
 
-    assert devices_ids == BACKEND_DEVICES_IDS
+    assert json.loads(result) == BACKEND_DEVICES_IDS
 
 
-@pytest.mark.asyncio
 async def test_last_duration_summary_tool_returns_processed_api_response() -> None:
-    summary = await execute_last_duration_summary_tool(
-        jwt="runtime-jwt",
-        renile_client=FakeReNileClient(),  # type: ignore[arg-type]
-        device_id="device-1",
-        start_time="2026-06-01 00:00",
+    result = await get_last_duration_summary.coroutine(
+        device_id="device-1", start_time="2026-06-01 00:00", runtime=_runtime()
     )
 
-    assert summary == {
+    assert json.loads(result) == {
         "device_id": "device-1",
         "start_time": "2026-06-01 00:00",
         "data_type": "month",
@@ -186,16 +180,12 @@ async def test_last_duration_summary_tool_returns_processed_api_response() -> No
     }
 
 
-@pytest.mark.asyncio
 async def test_specific_time_readings_tool_returns_processed_api_response() -> None:
-    readings = await execute_specific_time_readings_tool(
-        jwt="runtime-jwt",
-        renile_client=FakeReNileClient(),  # type: ignore[arg-type]
-        device_id="device-1",
-        start_time="2026-06-01 00:00",
+    result = await get_specific_time_readings.coroutine(
+        device_id="Device 1", start_time="2026-06-01 00:00", runtime=_runtime()
     )
 
-    assert readings == {
+    assert json.loads(result) == {
         "device_id": "device-1",
         "start_time": "2026-06-01 00:00",
         "data_type": "day",
@@ -203,14 +193,13 @@ async def test_specific_time_readings_tool_returns_processed_api_response() -> N
     }
 
 
-@pytest.mark.asyncio
 async def test_plant_diseases_detection_tool_returns_backend_response_unchanged() -> None:
-    prediction = await execute_plant_diseases_detection_tool(
-        plant_disease_client=FakePlantDiseaseClient(),  # type: ignore[arg-type]
-        image=UploadedImage(filename="plant.jpg", content_type="image/jpeg", content=b"fake-image"),
-    )
+    tool_cache = FakeToolCache()
+    image = UploadedImage(filename="plant.jpg", content_type="image/jpeg", content=b"fake-image")
 
-    assert prediction == {
+    result = await plant_diseases_detection.coroutine(runtime=_runtime(tool_cache, image=image))
+
+    assert json.loads(result) == {
         "is_plant": True,
         "disease": "potato early blight",
         "is_healthy": False,
@@ -218,3 +207,9 @@ async def test_plant_diseases_detection_tool_returns_backend_response_unchanged(
         "source": "yolo",
         "message": "نصيحة عربية",
     }
+    assert tool_cache.stored_results == []
+
+
+async def test_plant_diseases_detection_tool_requires_an_image() -> None:
+    with pytest.raises(ValueError):
+        await plant_diseases_detection.coroutine(runtime=_runtime())
