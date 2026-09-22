@@ -3,7 +3,7 @@ from fastapi.testclient import TestClient
 
 from api.v1.endpoints.chat import router
 from models.schemas.chat import ChatRequest, ChatResponse
-from providers.ASR.interface import ASRError
+from providers.ASR.interface import ASRError, ASRUnsupportedAudioError
 
 
 class FakeChatService:
@@ -23,14 +23,14 @@ class FakeChatService:
 
 
 class FakeASR:
-    def __init__(self, text: str = "درجة الحرارة كام؟", should_fail: bool = False) -> None:
+    def __init__(self, text: str = "درجة الحرارة كام؟", error: Exception | None = None) -> None:
         self._text = text
-        self._should_fail = should_fail
+        self._error = error
 
     async def transcribe_wav(self, audio_bytes: bytes) -> str:
         assert audio_bytes == b"fake-wav"
-        if self._should_fail:
-            raise ASRError("failed")
+        if self._error is not None:
+            raise self._error
         return self._text
 
 
@@ -67,13 +67,13 @@ def test_chat_endpoint_keeps_json_request_shape() -> None:
     ]
 
 
-def test_chat_endpoint_answers_multipart_wav_file_with_text_only() -> None:
+def test_chat_endpoint_answers_multipart_audio_file_with_text_only() -> None:
     client, chat_service = make_client()
 
     response = client.post(
         "/api/v1/chat",
         data={"jwt": "runtime-jwt", "conversation_id": "conversation-1"},
-        files={"wav_file": ("voice.wav", b"fake-wav", "audio/wav")},
+        files={"audio_file": ("voice.wav", b"fake-wav", "audio/wav")},
     )
 
     assert response.status_code == 200
@@ -150,7 +150,7 @@ def test_chat_endpoint_rejects_multipart_with_message_and_wav_file() -> None:
     )
 
     assert response.status_code == 422
-    assert response.json()["detail"] == "wav_file cannot be sent with message or image_file."
+    assert response.json()["detail"] == "audio_file cannot be sent with message or image_file."
 
 
 def test_chat_endpoint_rejects_multipart_without_message_or_wav_file() -> None:
@@ -162,7 +162,7 @@ def test_chat_endpoint_rejects_multipart_without_message_or_wav_file() -> None:
     )
 
     assert response.status_code == 422
-    assert response.json()["detail"] == "Send message, wav_file, image_file, or message with image_file."
+    assert response.json()["detail"] == "Send message, audio_file, image_file, or message with image_file."
 
 
 def test_chat_endpoint_accepts_multipart_with_message_and_image_file() -> None:
@@ -205,7 +205,7 @@ def test_chat_endpoint_rejects_multipart_with_wav_and_image_file() -> None:
     )
 
     assert response.status_code == 422
-    assert response.json()["detail"] == "wav_file cannot be sent with message or image_file."
+    assert response.json()["detail"] == "audio_file cannot be sent with message or image_file."
 
 
 def test_chat_endpoint_rejects_unsupported_image_type() -> None:
@@ -247,17 +247,46 @@ def test_chat_endpoint_rejects_large_image() -> None:
     assert response.json()["detail"] == "image_file is too large."
 
 
-def test_chat_endpoint_rejects_non_wav_audio() -> None:
-    client, _ = make_client()
+def test_chat_endpoint_accepts_non_wav_audio() -> None:
+    # Any format the ASR backend can decode is allowed, not only WAV.
+    client, chat_service = make_client()
 
     response = client.post(
         "/api/v1/chat",
         data={"jwt": "runtime-jwt", "conversation_id": "conversation-1"},
-        files={"wav_file": ("voice.mp3", b"fake-wav", "audio/mpeg")},
+        files={"audio_file": ("voice.mp3", b"fake-wav", "audio/mpeg")},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["transcript"] == "درجة الحرارة كام؟"
+    assert chat_service.requests[0].message == "درجة الحرارة كام؟"
+
+
+def test_chat_endpoint_accepts_the_deprecated_wav_file_field() -> None:
+    client, chat_service = make_client()
+
+    response = client.post(
+        "/api/v1/chat",
+        data={"jwt": "runtime-jwt", "conversation_id": "conversation-1"},
+        files={"wav_file": ("voice.wav", b"fake-wav", "audio/wav")},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["transcript"] == "درجة الحرارة كام؟"
+    assert chat_service.requests[0].message == "درجة الحرارة كام؟"
+
+
+def test_chat_endpoint_returns_422_when_audio_cannot_be_decoded() -> None:
+    client, _ = make_client(asr=FakeASR(error=ASRUnsupportedAudioError("bad")))
+
+    response = client.post(
+        "/api/v1/chat",
+        data={"jwt": "runtime-jwt", "conversation_id": "conversation-1"},
+        files={"audio_file": ("voice.mp3", b"fake-wav", "audio/mpeg")},
     )
 
     assert response.status_code == 422
-    assert response.json()["detail"] == "wav_file must be a WAV audio file."
+    assert response.json()["detail"] == "audio_file could not be decoded as audio."
 
 
 def test_chat_endpoint_rejects_empty_transcription() -> None:
@@ -274,7 +303,7 @@ def test_chat_endpoint_rejects_empty_transcription() -> None:
 
 
 def test_chat_endpoint_returns_503_when_transcription_fails() -> None:
-    client, _ = make_client(asr=FakeASR(should_fail=True))
+    client, _ = make_client(asr=FakeASR(error=ASRError("failed")))
 
     response = client.post(
         "/api/v1/chat",

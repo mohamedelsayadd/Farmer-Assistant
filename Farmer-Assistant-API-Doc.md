@@ -79,7 +79,7 @@ Use `multipart/form-data` for voice and plant image messages.
 | `jwt` | text | Yes | ReNile user JWT. |
 | `conversation_id` | text | Yes | Stable conversation ID used for chat memory. |
 | `message` | text | Conditional | Text message. Can be sent alone or with `image_file`. |
-| `wav_file` | file | Conditional | WAV audio message. Must be sent alone. |
+| `audio_file` | file | Conditional | Voice message in any ffmpeg-decodable audio format. Must be sent alone. `wav_file` is accepted as a deprecated alias. |
 | `image_file` | file | Conditional | Plant image. Can be sent alone or with `message`. |
 
 ### Allowed Input Combinations
@@ -89,10 +89,10 @@ Use `multipart/form-data` for voice and plant image messages.
 | `message` only | Allowed |
 | `image_file` only | Allowed |
 | `message` + `image_file` | Allowed |
-| `wav_file` only | Allowed |
-| `wav_file` + `message` | Rejected |
-| `wav_file` + `image_file` | Rejected |
-| Empty request without `message`, `wav_file`, or `image_file` | Rejected |
+| `audio_file` only | Allowed |
+| `audio_file` + `message` | Rejected |
+| `audio_file` + `image_file` | Rejected |
+| Empty request without `message`, `audio_file`, or `image_file` | Rejected |
 
 ## Multipart Text Request
 
@@ -105,14 +105,14 @@ curl -X POST http://localhost:8000/api/v1/chat \
 
 ## Voice Request
 
-Voice requests must upload a WAV file with field name `wav_file`.
+Voice requests upload an audio file with field name `audio_file`. The older name `wav_file` still works and is treated identically.
 
 ### Supported Audio
 
 | Requirement | Value |
 |---|---|
-| Field name | `wav_file` |
-| Format | WAV |
+| Field name | `audio_file` (or the deprecated `wav_file`) |
+| Formats | Anything ffmpeg can decode: wav, mp3, m4a, ogg, opus, webm, flac, amr |
 | Max size | Configured by `ASR_MAX_AUDIO_BYTES` |
 
 ### Example
@@ -121,13 +121,20 @@ Voice requests must upload a WAV file with field name `wav_file`.
 curl -X POST http://localhost:8000/api/v1/chat \
   -F "jwt=user-jwt" \
   -F "conversation_id=conversation-1" \
-  -F "wav_file=@voice.wav;type=audio/wav"
+  -F "audio_file=@voice.wav;type=audio/wav"
+```
+
+```bash
+curl -X POST http://localhost:8000/api/v1/chat \
+  -F "jwt=user-jwt" \
+  -F "conversation_id=conversation-1" \
+  -F "audio_file=@voice.m4a;type=audio/mp4"
 ```
 
 ### Voice Flow
 
-1. Backend validates the WAV upload.
-2. Backend transcribes audio using the configured ASR provider.
+1. Backend checks the upload is non-empty and within `ASR_MAX_AUDIO_BYTES`. The format is not checked here.
+2. Backend sends the audio to the FMS-Voice ASR service for transcription. If that service is unavailable, the request fails with 503; there is no local fallback.
 3. Transcribed text is sent through the normal chatbot flow.
 4. The response is text only (no generated audio).
 
@@ -203,7 +210,7 @@ Successful requests return HTTP `200`.
 | `message` | string | No | Final chatbot response. |
 | `source` | string | Yes | Plant disease provider source such as `yolo`, `kindwise`, or `gemini`. Included only for plant image diagnosis when returned by the plant disease API. |
 | `disease` | string | Yes | Disease name returned by the plant disease API. Included only for plant image diagnosis when a disease is detected. |
-| `transcript` | string | Yes | ASR transcription of the uploaded `wav_file`. Included only for voice requests. |
+| `transcript` | string | Yes | ASR transcription of the uploaded `audio_file`. Included only for voice requests. |
 
 Normal text and farm reading responses omit `source`, `disease`, and `transcript`. Voice requests are answered with text only; the service does not generate audio.
 
@@ -247,7 +254,7 @@ Status: `422 Unprocessable Entity`
 
 ```json
 {
-  "detail": "Send message, wav_file, image_file, or message with image_file."
+  "detail": "Send message, audio_file, image_file, or message with image_file."
 }
 ```
 
@@ -257,17 +264,19 @@ Status: `422 Unprocessable Entity`
 
 ```json
 {
-  "detail": "wav_file cannot be sent with message or image_file."
+  "detail": "audio_file cannot be sent with message or image_file."
 }
 ```
 
-### Unsupported Audio Type
+### Undecodable Audio
 
 Status: `422 Unprocessable Entity`
 
+Returned when the ASR service cannot decode the uploaded file as audio.
+
 ```json
 {
-  "detail": "wav_file must be a WAV audio file."
+  "detail": "audio_file could not be decoded as audio."
 }
 ```
 
@@ -277,7 +286,7 @@ Status: `413 Payload Too Large`
 
 ```json
 {
-  "detail": "wav_file is too large."
+  "detail": "audio_file is too large."
 }
 ```
 
@@ -287,13 +296,15 @@ Status: `422 Unprocessable Entity`
 
 ```json
 {
-  "detail": "wav_file must not be empty."
+  "detail": "audio_file must not be empty."
 }
 ```
 
 ### ASR Failure
 
 Status: `503 Service Unavailable`
+
+Returned when the FMS-Voice service is unreachable, times out, or returns a server-side error.
 
 ```json
 {
@@ -336,7 +347,7 @@ Status: `422 Unprocessable Entity`
 - Use `application/json` only for text-only messages.
 - Use `multipart/form-data` for voice or image uploads.
 - Send plant images to the chatbot backend as `image_file`; the chatbot backend forwards them to the plant disease API as `file`.
-- `wav_file` must be sent alone.
+- `audio_file` must be sent alone.
 - `image_file` can be sent alone or with `message`.
 - Do not send Base64 images or audio JSON.
 - Reuse the same `conversation_id` to continue a conversation.

@@ -56,6 +56,9 @@ class Settings(BaseSettings):
     asr_compute_type: str = Field(alias="ASR_COMPUTE_TYPE")
     asr_dtype: str = Field(alias="ASR_DTYPE")
     asr_max_new_tokens: int = Field(alias="ASR_MAX_NEW_TOKENS", gt=0)
+    asr_remote_base_url: str = Field(alias="ASR_REMOTE_BASE_URL")
+    asr_remote_transcribe_path: str = Field(alias="ASR_REMOTE_TRANSCRIBE_PATH")
+    asr_remote_timeout_seconds: float = Field(alias="ASR_REMOTE_TIMEOUT_SECONDS", gt=0)
 
     langfuse_secret_key: str = Field(alias="LANGFUSE_SECRET_KEY")
     langfuse_public_key: str = Field(alias="LANGFUSE_PUBLIC_KEY")

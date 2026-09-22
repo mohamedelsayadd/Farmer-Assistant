@@ -9,6 +9,55 @@ from typing import Any
 
 import pytest
 
+from core.config import Settings
+
+
+BASE_ENV = {
+    "APP_NAME": "test",
+    "APP_ENV": "test",
+    "LOG_LEVEL": "INFO",
+    "LLM_API_KEY": "EMPTY",
+    "LLM_BASE_URL": "http://localhost:5000/v1",
+    "LLM_MODEL": "test-model",
+    "LLM_ENABLE_THINKING": "false",
+    "LLM_TEMPERATURE": "0.2",
+    "LLM_MAX_TOKENS": "1024",
+    "LLM_TOP_P": "0.8",
+    "LLM_TOP_K": "20",
+    "REDIS_URL": "redis://localhost:6379/0",
+    "REDIS_MEMORY_TTL_SECONDS": "3600",
+    "REDIS_MEMORY_MAX_MESSAGES": "12",
+    "REDIS_TOOL_CACHE_URL": "redis://localhost:6379/1",
+    "REDIS_TOOL_CACHE_TTL_SECONDS": "600",
+    "RENILE_API_BASE_URL": "https://renile-iot.com",
+    "RENILE_DEVICES_PATH": "/api/v1/devices/names/",
+    "RENILE_CURRENT_READINGS_PATH": "/api/v1/snapshot",
+    "RENILE_HISTORICAL_READINGS_PATH": "/api/v1/data/",
+    "PLANT_DISEASE_API_BASE_URL": "http://127.0.0.1:8002",
+    "PLANT_DISEASE_PREDICT_PATH": "/api/v1/predict",
+    "PLANT_DISEASE_MAX_IMAGE_BYTES": "5242880",
+    "HTTP_TIMEOUT_SECONDS": "40",
+    "ASR_PROVIDER": "cohere",
+    "ASR_MODEL": "CohereLabs/cohere-transcribe-arabic-07-2026",
+    "ASR_DEVICE": "cpu",
+    "ASR_LANGUAGE": "ar",
+    "ASR_MAX_AUDIO_BYTES": "524288",
+    "ASR_COMPUTE_TYPE": "int8",
+    "ASR_DTYPE": "float16",
+    "ASR_MAX_NEW_TOKENS": "256",
+    "ASR_REMOTE_BASE_URL": "http://asr.test",
+    "ASR_REMOTE_TRANSCRIBE_PATH": "/transcribe",
+    "ASR_REMOTE_TIMEOUT_SECONDS": "120",
+    "LANGFUSE_SECRET_KEY": "sk-lf-test",
+    "LANGFUSE_PUBLIC_KEY": "pk-lf-test",
+    "LANGFUSE_BASE_URL": "https://cloud.langfuse.com",
+}
+
+
+def build_settings(**overrides: str) -> Settings:
+    # Init values outrank the .env file, so this never depends on a local .env.
+    return Settings(**{**BASE_ENV, **overrides})
+
 
 class FakeToolCache:
     """In-memory stand-in for memory.tool_cache.ToolCache, keyed like the real one."""

@@ -43,7 +43,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     renile_client = ReNileClient(settings)
     plant_disease_client = PlantDiseaseClient(settings)
     asr = create_asr_provider(settings)
-    await asr.load_model()
 
     app.state.redis = redis
     app.state.tool_cache_redis = tool_cache_redis

@@ -14,19 +14,21 @@
 - Settings load from root `.env` via `pydantic-settings`; `.env.example` is the verified list of env names. Keep real secrets only in `.env`.
 - `.env` is the single source of truth: `src/core/config.py` declares no in-code defaults, so every key in `.env.example` is required and a missing one fails validation at startup. Add a new setting to `.env` and `.env.example` in the same change as the `Settings` field.
 - `get_settings()` is `lru_cache`d. Never read env vars directly outside `core/config.py`.
-- Required external services for live API use: Redis, an OpenAI-compatible LLM endpoint from `LLM_BASE_URL`, ReNile API access/JWT, and the plant-disease prediction API from `PLANT_DISEASE_API_BASE_URL`.
+- Required external services for live API use: Redis, an OpenAI-compatible LLM endpoint from `LLM_BASE_URL`, ReNile API access/JWT, the plant-disease prediction API from `PLANT_DISEASE_API_BASE_URL`, and — for voice messages only — the FMS-Voice ASR service from `ASR_REMOTE_BASE_URL`. None of them is contacted at startup.
 - The speech-to-text subsystem is named ASR throughout: package `src/providers/ASR/`, settings `asr_*`, env keys `ASR_*`, `app.state.asr`, and `asr_*` log events. Existing `.env` files must rename `STT_*` to `ASR_*` and add `ASR_DTYPE` and `ASR_MAX_NEW_TOKENS`, or startup fails validation.
-- `ASR_PROVIDER` selects the provider: `cohere` (local `CohereLabs/cohere-transcribe-arabic-07-2026` weights via `transformers`) or `faster_whisper`. `ASR_LANGUAGE` is required for `cohere`; the provider raises at construction when it is empty.
-- The Cohere weights come from a gated Hugging Face repo, so a token with accepted conditions must be available (`HF_TOKEN` or `hf auth login`) before the model loads at startup.
-- ASR models load eagerly during the lifespan, so app boot is slow and needs the weights reachable.
+- `ASR_PROVIDER` selects the provider: `fms_voice` (the remote FMS-Voice HTTP service, the deployed default), `cohere` (local `CohereLabs/cohere-transcribe-arabic-07-2026` weights via `transformers`), or `faster_whisper`. `ASR_LANGUAGE` is required for `cohere` and must be `ar` or `en` for `fms_voice`; both raise at construction when the value is wrong.
+- The Cohere weights come from a gated Hugging Face repo, so a token with accepted conditions must be available (`HF_TOKEN` or `hf auth login`). This applies only to a local-only run (`ASR_PROVIDER=cohere`) and to `streamlit_app.py`'s ASR tab — never to the deployed `fms_voice` path.
+- No ASR model is loaded at startup, or ever, in the API process. `create_asr_provider` only constructs an object and `FMSVoiceASRProvider` is a plain HTTP client of `ASR_REMOTE_BASE_URL` (contract in `ASR-API-Contract.md`). There is no fallback to a local model: when FMS-Voice is unreachable, times out, or returns any 5xx, the transcription raises `ASRError` and the endpoint answers 503.
+- ASR error taxonomy: `ASRUnsupportedAudioError` (the service's 415) becomes a 422, and every other `ASRError` becomes a 503. Requests are never retried inside the provider.
 - There is no TTS. Speech is input-only (ASR); every reply is text.
 
 ## Entrypoints
 - FastAPI app: `src/main.py`; routes: `/health` and `POST /api/v1/chat`.
 - `src/main.py`'s lifespan is the composition root: it builds every dependency once (Redis clients, `ChatOpenAI` model, ReNile client, plant-disease client, ASR, Langfuse callback handler) and hangs them on `app.state`. Nothing constructs its own providers; the agent receives clients through its constructor.
 - The chat endpoint takes a bare `Request`, not a typed body. `services/chat_request_processor.py` branches on content type and normalizes JSON and multipart into one `ChatRequest`.
-- JSON request schema is `jwt`, `conversation_id`, `message`. Multipart accepts `message`, `wav_file`, and/or `image_file`; `wav_file` is mutually exclusive with the other two, and at least one input is required.
-- `wav_file` is transcribed into `message` before anything else runs, so the rest of the pipeline only ever sees text plus an optional `UploadedImage`.
+- JSON request schema is `jwt`, `conversation_id`, `message`. Multipart accepts `message`, `audio_file`, and/or `image_file`; `audio_file` is mutually exclusive with the other two, and at least one input is required. `wav_file` is a deprecated alias of `audio_file` and is still accepted.
+- `audio_file` may be any format ffmpeg can decode (wav, mp3, m4a, ogg, opus, webm, flac, amr). There is no filename or content-type check — the ASR backend decides, and an undecodable upload returns 422.
+- `audio_file` is transcribed into `message` before anything else runs, so the rest of the pipeline only ever sees text plus an optional `UploadedImage`.
 - An image sent with no text gets a synthetic English marker message (`IMAGE_UPLOAD_MESSAGE`); `agent/agent.py::build_messages` appends `IMAGE_ATTACHMENT_MARKER` when an image accompanies text. The prompt instructs the model to ignore bracketed markers when picking reply language.
 - `image_file` must be `.jpeg/.jpg/.png/.webp` and within `PLANT_DISEASE_MAX_IMAGE_BYTES`; oversize uploads return 413, bad type or empty return 422.
 - Response schema is `conversation_id`, `message`, plus optional `source`, `disease`. The endpoint sets `response_model_exclude_none=True`, so unused optional fields are absent from the payload.
@@ -52,7 +54,7 @@
 
 ## Providers
 - `providers/llm.py::create_chat_model` returns a `ChatOpenAI` (sampling settings, `extra_body` `top_k` and `chat_template_kwargs.enable_thinking`). ReNile and plant-disease are plain classes in `src/providers/`.
-- ASR follows interface + factory + `providers/` (`src/providers/ASR/`). A new ASR backend goes in `providers/ASR/providers/` and is wired only in its `factory.py`.
+- ASR follows interface + factory + `providers/` (`src/providers/ASR/`). A new ASR backend goes in `providers/ASR/providers/` and is wired only in its `factory.py`. `fms_voice.py` opens an `httpx.AsyncClient` per call like `plant_disease_client.py`, so there is no client on `app.state` and nothing to tear down.
 
 ## Memory And Cache
 - Two Redis databases, deliberately separate. DB 0 stores only `user` and `assistant` messages in `conversation:{conversation_id}`; defaults are TTL `3600` seconds and max `12` messages.
@@ -74,6 +76,6 @@
 - Agent orchestration, middleware, device resolution, or caching changes: update `tests/test_agent.py` (runs the real `create_agent` graph against a scripted fake chat model).
 - Prompt/date/language/scope changes: update `tests/test_agent_memory_context.py`.
 - Historical response processor changes (`src/services/historical_summary_processor.py`, now the only processor): update `tests/test_historical_summary_processor.py`.
-- ASR provider or factory changes (`src/providers/ASR/`): update `tests/test_asr_factory.py`; it builds `Settings` from a literal dict so it never needs a local `.env`, and it must not download models or touch a GPU.
+- ASR provider or factory changes (`src/providers/ASR/`): update `tests/test_asr_factory.py`, and `tests/test_asr_fms_voice.py` for the remote provider. `BASE_ENV`/`build_settings` live in `tests/conftest.py` and build `Settings` from a literal dict so no local `.env` is needed. Remote-provider tests drive `httpx.MockTransport` through the `_build_client` seam and must never reach a live URL, download models, or touch a GPU.
 - Request parsing, endpoint, or response-shape changes: update `tests/test_chat_endpoint.py` and `tests/test_chat_schema.py`.
 - Tests must stay hermetic: fakes only, no live Redis, LLM, ReNile, or plant-disease APIs, and no model downloads or GPU use.

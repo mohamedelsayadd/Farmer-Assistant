@@ -12,13 +12,13 @@ Built on FastAPI, the agent calls backend tools to read live and historical ReNi
 
 - 🌱 **Plant disease diagnosis** — send a leaf photo, get the likely disease and advice.
 - 📊 **Farm readings** — current device status, plus daily summaries and hourly history.
-- 🎙️ **Voice questions** — send a WAV, it is transcribed and answered in text.
+- 🎙️ **Voice questions** — send an audio note in any common format (wav, mp3, m4a, ogg, opus, webm, flac, amr); it is transcribed and answered in text.
 - 🧠 **Conversation memory** — Redis-backed follow-ups, with a separate cache for tool results.
 - 🌍 **Bilingual** — replies in Egyptian Arabic or English, matching how the user wrote.
 
 ## Stack
 
-Python 3.12 · FastAPI · LangChain `create_agent` · OpenAI-compatible LLM · Redis · HTTPX · Cohere Transcribe Arabic (ASR, Faster-Whisper fallback) · Langfuse · pytest
+Python 3.12 · FastAPI · LangChain `create_agent` · OpenAI-compatible LLM · Redis · HTTPX · FMS-Voice ASR service (Cohere Transcribe Arabic) · Langfuse · pytest
 
 ## Quick Start
 
@@ -43,7 +43,7 @@ Then try it in the browser with the manual tester (text, plant image, or recorde
 uv run streamlit run streamlit_app.py  # http://localhost:8501
 ```
 
-> **Note:** ASR models load at startup, so the first boot is slow. The Cohere ASR weights are gated on Hugging Face — accept the model conditions and set `HF_TOKEN` (or run `hf auth login`) first.
+> **Note:** nothing is loaded at startup and no external service has to be up for the app to boot. Voice messages are transcribed by the FMS-Voice service at `ASR_REMOTE_BASE_URL` (see `ASR-API-Contract.md`); while it is down, voice requests return 503 and everything else keeps working. The gated Hugging Face weights and `HF_TOKEN` are only needed for a local-only run (`ASR_PROVIDER=cohere`) or the Streamlit ASR tab.
 
 ## API
 
@@ -64,7 +64,7 @@ One endpoint: `POST /api/v1/chat`. Full reference in [Farmer-Assistant-API-Doc.m
 | Field | Notes |
 | --- | --- |
 | `message` | Plain text. |
-| `wav_file` | WAV audio, transcribed then answered. Cannot be combined with the others. |
+| `audio_file` | Audio in any ffmpeg-decodable format, transcribed then answered. Cannot be combined with the others. `wav_file` is a deprecated alias. |
 | `image_file` | `.jpg` / `.jpeg` / `.png` / `.webp`, optionally alongside `message`. |
 
 **Response:**
@@ -94,8 +94,10 @@ The ones you'll usually change:
 | `REDIS_URL`, `REDIS_TOOL_CACHE_URL` | Conversation memory (DB 0) and tool cache (DB 1). |
 | `RENILE_API_BASE_URL` | ReNile platform API. |
 | `PLANT_DISEASE_API_BASE_URL` | Plant disease prediction service. |
-| `ASR_PROVIDER` | `cohere` (default) or `faster_whisper`. |
-| `ASR_DEVICE` | Where the speech model runs, e.g. `cuda:0` or `cpu`. |
+| `ASR_PROVIDER` | `fms_voice` (default, remote service) , `cohere`, or `faster_whisper`. |
+| `ASR_REMOTE_BASE_URL` | The FMS-Voice service, e.g. `http://127.0.0.1:5001`. |
+| `ASR_REMOTE_TIMEOUT_SECONDS` | Read timeout for a transcription request. |
+| `ASR_DEVICE` | Where a local speech model runs, e.g. `cuda:0` or `cpu`. Unused by `fms_voice`. |
 
 ## How It Works
 

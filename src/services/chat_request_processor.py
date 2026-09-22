@@ -31,20 +31,21 @@ async def parse_form_chat_request(request: Request) -> ChatRequest:
     jwt = get_form_str(form, "jwt")
     conversation_id = get_form_str(form, "conversation_id")
     message = get_form_str(form, "message")
-    wav_file = form.get("wav_file")
+    # wav_file is the deprecated alias of audio_file, kept so existing clients keep working.
+    audio_file = form.get("audio_file") or form.get("wav_file")
     image_file = form.get("image_file")
 
     has_message = bool(message and message.strip())
-    has_audio = isinstance(wav_file, UploadFile) and bool(wav_file.filename)
+    has_audio = isinstance(audio_file, UploadFile) and bool(audio_file.filename)
     has_image = isinstance(image_file, UploadFile) and bool(image_file.filename)
     if has_audio and (has_message or has_image):
-        raise HTTPException(status_code=422, detail="wav_file cannot be sent with message or image_file.")
+        raise HTTPException(status_code=422, detail="audio_file cannot be sent with message or image_file.")
     if not has_audio and not has_message and not has_image:
-        raise HTTPException(status_code=422, detail="Send message, wav_file, image_file, or message with image_file.")
+        raise HTTPException(status_code=422, detail="Send message, audio_file, image_file, or message with image_file.")
 
     transcript = None
     if has_audio:
-        message = transcript = await transcribe_wav_file(request, wav_file)
+        message = transcript = await transcribe_wav_file(request, audio_file)
     image = await read_image_file(request, image_file) if has_image else None
     if has_image and has_message:
         message = message.strip()
