@@ -37,14 +37,9 @@ BASE_ENV = {
     "PLANT_DISEASE_PREDICT_PATH": "/api/v1/predict",
     "PLANT_DISEASE_MAX_IMAGE_BYTES": "5242880",
     "HTTP_TIMEOUT_SECONDS": "40",
-    "ASR_PROVIDER": "cohere",
-    "ASR_MODEL": "CohereLabs/cohere-transcribe-arabic-07-2026",
-    "ASR_DEVICE": "cpu",
+    "ASR_PROVIDER": "fms_voice",
     "ASR_LANGUAGE": "ar",
     "ASR_MAX_AUDIO_BYTES": "524288",
-    "ASR_COMPUTE_TYPE": "int8",
-    "ASR_DTYPE": "float16",
-    "ASR_MAX_NEW_TOKENS": "256",
     "ASR_REMOTE_BASE_URL": "http://asr.test",
     "ASR_REMOTE_TRANSCRIBE_PATH": "/transcribe",
     "ASR_REMOTE_TIMEOUT_SECONDS": "120",
@@ -52,6 +47,11 @@ BASE_ENV = {
     "LANGFUSE_PUBLIC_KEY": "pk-lf-test",
     "LANGFUSE_BASE_URL": "https://cloud.langfuse.com",
 }
+
+
+# agent.agent builds its model from get_settings() at import time; seed the process env so
+# that never depends on a local .env (env vars outrank the .env file).
+os.environ.update(BASE_ENV)
 
 
 def build_settings(**overrides: str) -> Settings:

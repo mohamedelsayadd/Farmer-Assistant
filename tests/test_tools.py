@@ -1,10 +1,12 @@
 import json
 import logging
-from types import SimpleNamespace
 
 import pytest
+from agents import FunctionTool
+from agents.tool_context import ToolContext
 
 from agent.tools import (
+    TOOL_FAILED_MESSAGE,
     TOOLS,
     AgentContext,
     get_current_readings,
@@ -125,8 +127,8 @@ class FakePlantDiseaseClient:
         }
 
 
-def _runtime(tool_cache: FakeToolCache | None = None, image: UploadedImage | None = None) -> SimpleNamespace:
-    context = AgentContext(
+def _context(tool_cache: FakeToolCache | None = None, image: UploadedImage | None = None) -> AgentContext:
+    return AgentContext(
         conversation_id="conversation-1",
         jwt="runtime-jwt",
         renile_client=FakeReNileClient(),  # type: ignore[arg-type]
@@ -134,11 +136,19 @@ def _runtime(tool_cache: FakeToolCache | None = None, image: UploadedImage | Non
         plant_disease_client=FakePlantDiseaseClient(),  # type: ignore[arg-type]
         image=image,
     )
-    return SimpleNamespace(context=context)
+
+
+async def invoke(tool: FunctionTool, context: AgentContext, **arguments: str) -> str:
+    """Run a decorated tool the way the SDK runner does, including its failure handler."""
+    tool_arguments = json.dumps(arguments)
+    tool_context = ToolContext(
+        context=context, tool_name=tool.name, tool_call_id="call-1", tool_arguments=tool_arguments
+    )
+    return await tool.on_invoke_tool(tool_context, tool_arguments)
 
 
 async def test_current_readings_tool_returns_backend_response_unchanged() -> None:
-    result = await get_current_readings(_runtime())
+    result = await invoke(get_current_readings, _context())
 
     assert json.loads(result) == BACKEND_CURRENT_READINGS
 
@@ -146,7 +156,7 @@ async def test_current_readings_tool_returns_backend_response_unchanged() -> Non
 async def test_current_readings_tool_logs_do_not_include_jwt(caplog: pytest.LogCaptureFixture) -> None:
     caplog.set_level(logging.INFO)
 
-    await get_current_readings(_runtime())
+    await invoke(get_current_readings, _context())
 
     assert "runtime-jwt" not in caplog.text
     assert "tool_call_completed tool_name=get_current_readings" in caplog.text
@@ -155,20 +165,20 @@ async def test_current_readings_tool_logs_do_not_include_jwt(caplog: pytest.LogC
 async def test_current_readings_tool_caches_result_per_conversation() -> None:
     tool_cache = FakeToolCache()
 
-    await get_current_readings(_runtime(tool_cache))
+    await invoke(get_current_readings, _context(tool_cache))
 
     assert tool_cache.stored_results == [("conversation-1", "get_current_readings", {}, BACKEND_CURRENT_READINGS)]
 
 
 async def test_devices_ids_tool_returns_backend_response_unchanged() -> None:
-    result = await get_devices_ids(_runtime())
+    result = await invoke(get_devices_ids, _context())
 
     assert json.loads(result) == BACKEND_DEVICES_IDS
 
 
 async def test_last_duration_summary_tool_returns_processed_api_response() -> None:
-    result = await get_last_duration_summary(
-        _runtime(), device_id="device-1", start_time="2026-06-01 00:00"
+    result = await invoke(
+        get_last_duration_summary, _context(), device_id="device-1", start_time="2026-06-01 00:00"
     )
 
     assert json.loads(result) == {
@@ -180,8 +190,8 @@ async def test_last_duration_summary_tool_returns_processed_api_response() -> No
 
 
 async def test_specific_time_readings_tool_returns_processed_api_response() -> None:
-    result = await get_specific_time_readings(
-        _runtime(), device_id="Device 1", start_time="2026-06-01 00:00"
+    result = await invoke(
+        get_specific_time_readings, _context(), device_id="Device 1", start_time="2026-06-01 00:00"
     )
 
     assert json.loads(result) == {
@@ -196,7 +206,9 @@ async def test_plant_diseases_detection_tool_returns_backend_response_unchanged(
     tool_cache = FakeToolCache()
     image = UploadedImage(filename="plant.jpg", content_type="image/jpeg", content=b"fake-image")
 
-    result = await plant_diseases_detection(_runtime(tool_cache, image=image))
+    context = _context(tool_cache, image=image)
+
+    result = await invoke(plant_diseases_detection, context)
 
     assert json.loads(result) == {
         "is_plant": True,
@@ -207,8 +219,13 @@ async def test_plant_diseases_detection_tool_returns_backend_response_unchanged(
         "message": "نصيحة عربية",
     }
     assert tool_cache.stored_results == []
+    assert context.plant_prediction == json.loads(result)
 
 
 async def test_plant_diseases_detection_tool_requires_an_image() -> None:
-    with pytest.raises(ValueError):
-        await plant_diseases_detection(_runtime())
+    context = _context()
+
+    result = await invoke(plant_diseases_detection, context)
+
+    assert result == TOOL_FAILED_MESSAGE
+    assert context.plant_prediction is None

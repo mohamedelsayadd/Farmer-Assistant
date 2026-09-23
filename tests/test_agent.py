@@ -1,10 +1,11 @@
 import json
 import logging
+from dataclasses import dataclass, field
 from typing import Any
 
 import httpx
 import pytest
-from agents import Model, ModelResponse, ModelSettings, Usage, UserError
+from agents import Model, ModelResponse, RunConfig, Usage
 from openinference.instrumentation.openai_agents import OpenAIAgentsInstrumentor
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
@@ -12,10 +13,11 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanE
 from openai.types.responses import ResponseFunctionToolCall, ResponseOutputMessage, ResponseOutputText
 from redis.exceptions import RedisError
 
-from agent.agent import FALLBACK_RESPONSE, MAX_TOOL_ROUNDS, FarmerAssistantAgent
+from agent.agent import FALLBACK_RESPONSE, MAX_TOOL_ROUNDS
 from agent.tools import TOOL_FAILED_MESSAGE, resolve_device_id
 from conftest import FakeToolCache
-from models.schemas.chat import UploadedImage
+from models.schemas.chat import ChatRequest, ChatResponse, UploadedImage
+from services.chat_service import ChatService
 
 DEVICES = [{"_id": f"device-{index}", "name": f"Device {index}"} for index in range(1, 7)] + [
     {"_id": "device-7", "name": "GreenHouse Control Unit"}
@@ -96,31 +98,78 @@ class FakePlantDiseaseClient:
         return {"is_plant": True, "is_healthy": False, "disease": "potato early blight", "source": "yolo"}
 
 
+class FakeMemory:
+    def __init__(self, history: list[dict]) -> None:
+        self.history = history
+        self.events: list[tuple[str, str]] = []
+
+    async def load(self, conversation_id: str) -> list[dict]:
+        assert conversation_id == "conversation-1"
+        return self.history
+
+    async def append(self, conversation_id: str, role: str, content: str) -> None:
+        self.events.append((role, content))
+
+
+@dataclass
+class ToolOutput:
+    name: str
+    output: str
+
+
+@dataclass
+class Harness:
+    model: FakeModel
+    renile_client: FakeReNileClient
+    tool_cache: Any
+    memory: FakeMemory = field(default_factory=lambda: FakeMemory(HISTORY))
+
+
+@dataclass
+class Result:
+    chat: ChatResponse
+    tool_outputs: list[ToolOutput]
+
+    @property
+    def response(self) -> str:
+        return self.chat.message
+
+
 def make_agent(
     responses: list[ModelOutput],
     renile_client: FakeReNileClient | None = None,
     tool_cache: Any = None,
-) -> tuple[FarmerAssistantAgent, FakeModel, FakeReNileClient]:
-    model = FakeModel(responses)
-    renile_client = renile_client or FakeReNileClient()
-    agent = FarmerAssistantAgent(
-        model,
-        ModelSettings(),
-        renile_client,  # type: ignore[arg-type]
-        tool_cache or FakeToolCache(),  # type: ignore[arg-type]
-        FakePlantDiseaseClient(),  # type: ignore[arg-type]
-    )
-    return agent, model, renile_client
+) -> tuple[Harness, FakeModel, FakeReNileClient]:
+    harness = Harness(FakeModel(responses), renile_client or FakeReNileClient(), tool_cache or FakeToolCache())
+    return harness, harness.model, harness.renile_client
 
 
-async def run(agent: FarmerAssistantAgent, message: str = "7", history: list | None = None, image: Any = None):
-    return await agent.run(
-        conversation_id="conversation-1",
-        jwt="runtime-jwt",
-        user_message=message,
-        history=HISTORY if history is None else history,
-        image=image,
+async def run(harness: Harness, message: str = "7", history: list | None = None, image: Any = None) -> Result:
+    harness.memory = FakeMemory(HISTORY if history is None else history)
+    service = ChatService(
+        memory=harness.memory,  # type: ignore[arg-type]
+        renile_client=harness.renile_client,  # type: ignore[arg-type]
+        tool_cache=harness.tool_cache,
+        plant_disease_client=FakePlantDiseaseClient(),  # type: ignore[arg-type]
+        run_config=RunConfig(model=harness.model),
     )
+    chat = await service.chat(
+        ChatRequest(jwt="runtime-jwt", conversation_id="conversation-1", message=message, image=image)
+    )
+    return Result(chat=chat, tool_outputs=tool_outputs(harness.model))
+
+
+def tool_outputs(model: FakeModel) -> list[ToolOutput]:
+    """Tool results as the model saw them on its last call, paired with their tool names."""
+    if not model.calls:
+        return []
+    items = model.calls[-1][1]
+    names = {item["call_id"]: item["name"] for item in items if item.get("type") == "function_call"}
+    return [
+        ToolOutput(name=names[item["call_id"]], output=item["output"])
+        for item in items
+        if item.get("type") == "function_call_output"
+    ]
 
 
 def test_resolve_device_id_matches_exact_id_ordinal_and_name() -> None:
@@ -134,7 +183,7 @@ def test_resolve_device_id_returns_none_for_blank_and_unknown() -> None:
     assert resolve_device_id("Unknown Device", DEVICES) is None
 
 
-async def test_answers_directly_without_tools() -> None:
+async def test_answers_directly_without_tools_and_saves_only_the_turn() -> None:
     agent, model, _ = make_agent([answer("السماد المناسب هو ...")])
 
     result = await run(agent, "إيه أحسن سماد للطماطم؟", history=[])
@@ -142,6 +191,7 @@ async def test_answers_directly_without_tools() -> None:
     assert result.response == "السماد المناسب هو ..."
     assert result.tool_outputs == []
     assert len(model.calls) == 1
+    assert agent.memory.events == [("user", "إيه أحسن سماد للطماطم؟"), ("assistant", "السماد المناسب هو ...")]
 
 
 async def test_prompt_has_dated_system_message_history_and_image_marker_only_on_current_turn() -> None:
@@ -168,6 +218,8 @@ async def test_multi_round_device_selection_follow_up() -> None:
 
     assert result.response == "ده ملخص درجات الحرارة لآخر أسبوع."
     assert [len(prompt) for _, prompt in model.calls] == [3, 5, 7]
+    # Tool results are never written into prompt memory.
+    assert agent.memory.events == [("user", "7"), ("assistant", "ده ملخص درجات الحرارة لآخر أسبوع.")]
     assert renile_client.summary_device_ids == ["device-7"]
     assert [item.name for item in result.tool_outputs] == ["get_devices_ids", "get_last_duration_summary"]
     assert json.loads(result.tool_outputs[1].output)["daily_rows"] == [{"date": "2026-06-18", "Temperature": 28.5}]
@@ -256,6 +308,7 @@ async def test_plant_tool_without_image_fails() -> None:
     result = await run(agent, "شخص النبات", history=[])
 
     assert result.tool_outputs[0].output == TOOL_FAILED_MESSAGE
+    assert (result.chat.source, result.chat.disease) == (None, None)
 
 
 async def test_redis_error_in_tool_is_not_reported_to_model() -> None:
@@ -263,12 +316,15 @@ async def test_redis_error_in_tool_is_not_reported_to_model() -> None:
         async def get(self, **kwargs: Any) -> Any:
             raise RedisError("redis down")
 
-    agent, _, _ = make_agent([tool_call("get_current_readings"), answer("done")], tool_cache=BrokenToolCache())
+    agent, model, _ = make_agent([tool_call("get_current_readings"), answer("done")], tool_cache=BrokenToolCache())
 
-    # The SDK wraps tool exceptions in UserError (an AgentsException, which ChatService catches).
-    with pytest.raises(UserError) as error:
-        await run(agent, "القراءات؟", history=[])
-    assert isinstance(error.value.__cause__, RedisError)
+    # The SDK wraps tool exceptions in UserError (an AgentsException), which ChatService turns
+    # into the temporary-error reply without saving the turn.
+    result = await run(agent, "القراءات؟", history=[])
+
+    assert result.response == "معلش، حصلت مشكلة مؤقتة. جرّب تاني بعد شوية."
+    assert len(model.calls) == 1
+    assert agent.memory.events == []
 
 
 async def test_plant_tool_with_image_returns_prediction() -> None:
@@ -278,6 +334,7 @@ async def test_plant_tool_with_image_returns_prediction() -> None:
     result = await run(agent, "شخص النبات", history=[], image=image)
 
     assert json.loads(result.tool_outputs[0].output)["disease"] == "potato early blight"
+    assert (result.chat.source, result.chat.disease) == ("yolo", "potato early blight")
 
 
 async def test_final_answer_has_thinking_stripped() -> None:

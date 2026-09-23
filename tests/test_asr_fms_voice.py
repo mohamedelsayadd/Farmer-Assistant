@@ -114,14 +114,6 @@ async def test_transcribe_raises_asr_error_when_the_service_is_unreachable(error
     assert not isinstance(exc_info.value, ASRUnsupportedAudioError)
 
 
-async def test_load_model_is_a_no_op() -> None:
-    handler, requests = responder(200, {"text": TRANSCRIPT})
-
-    await make_provider(handler).load_model()
-
-    assert requests == []
-
-
 def test_provider_rejects_an_unsupported_language() -> None:
     with pytest.raises(ValueError, match="Unsupported ASR_LANGUAGE for the fms_voice provider: fr"):
         FMSVoiceASRProvider(build_settings(ASR_PROVIDER="fms_voice", ASR_LANGUAGE="fr"))

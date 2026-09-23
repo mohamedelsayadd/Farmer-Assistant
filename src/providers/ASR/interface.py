@@ -10,8 +10,5 @@ class ASRUnsupportedAudioError(ASRError):
 
 
 class ASRProvider(Protocol):
-    async def load_model(self) -> None:
-        """Prepare the provider. Local providers load weights; remote providers do nothing."""
-
     async def transcribe_wav(self, audio_bytes: bytes) -> str:
         """Transcribe audio bytes into text."""

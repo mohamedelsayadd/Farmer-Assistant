@@ -43,7 +43,7 @@ Then try it in the browser with the manual tester (text, plant image, or recorde
 uv run streamlit run streamlit_app.py  # http://localhost:8501
 ```
 
-> **Note:** nothing is loaded at startup and no external service has to be up for the app to boot. Voice messages are transcribed by the FMS-Voice service at `ASR_REMOTE_BASE_URL` (see `ASR-API-Contract.md`); while it is down, voice requests return 503 and everything else keeps working. The gated Hugging Face weights and `HF_TOKEN` are only needed for a local-only run (`ASR_PROVIDER=cohere`) or the Streamlit ASR tab.
+> **Note:** nothing is loaded at startup and no external service has to be up for the app to boot. Voice messages are transcribed by the FMS-Voice service at `ASR_REMOTE_BASE_URL` (see `ASR-API-Contract.md`); while it is down, voice requests return 503 and everything else keeps working.
 
 ## API
 
@@ -94,10 +94,9 @@ The ones you'll usually change:
 | `REDIS_URL`, `REDIS_TOOL_CACHE_URL` | Conversation memory (DB 0) and tool cache (DB 1). |
 | `RENILE_API_BASE_URL` | ReNile platform API. |
 | `PLANT_DISEASE_API_BASE_URL` | Plant disease prediction service. |
-| `ASR_PROVIDER` | `fms_voice` (default, remote service) , `cohere`, or `faster_whisper`. |
+| `ASR_PROVIDER` | `fms_voice` (the remote FMS-Voice service; the only provider). |
 | `ASR_REMOTE_BASE_URL` | The FMS-Voice service, e.g. `http://127.0.0.1:5001`. |
 | `ASR_REMOTE_TIMEOUT_SECONDS` | Read timeout for a transcription request. |
-| `ASR_DEVICE` | Where a local speech model runs, e.g. `cuda:0` or `cpu`. Unused by `fms_voice`. |
 
 ## How It Works
 

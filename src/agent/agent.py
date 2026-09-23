@@ -1,46 +1,33 @@
-import logging
-from dataclasses import dataclass
 from datetime import date
-from time import perf_counter
 from typing import Any
 
-from agents import (
-    Agent,
-    MaxTurnsExceeded,
-    Model,
-    ModelSettings,
-    RunContextWrapper,
-    Runner,
-    ToolCallItem,
-    ToolCallOutputItem,
-    TResponseInputItem,
-)
+from agents import Agent, ModelSettings, OpenAIChatCompletionsModel, RunContextWrapper, TResponseInputItem
+from openai import AsyncOpenAI
 
 from agent.prompts import SYSTEM_PROMPT
 from agent.tools import TOOLS, AgentContext
+from core.config import get_settings
 from memory.redis_memory import MemoryMessage
-from memory.tool_cache import ToolCache
 from models.schemas.chat import UploadedImage
-from providers.plant_disease_client import PlantDiseaseClient
-from providers.renile_client import ReNileClient
-
-logger = logging.getLogger(__name__)
 
 IMAGE_ATTACHMENT_MARKER = "[The user attached a plant image with this message.]"
 MAX_TOOL_ROUNDS = 4
 FALLBACK_RESPONSE = "معلش، مش قادر أوصل لإجابة واضحة دلوقتي."
 
+settings = get_settings()
 
-@dataclass(frozen=True)
-class ToolOutput:
-    name: str
-    output: str
-
-
-@dataclass(frozen=True)
-class AgentResult:
-    response: str
-    tool_outputs: list[ToolOutput]
+# OpenAI-compatible chat model (vLLM/Qwen) over the Chat Completions API.
+client = AsyncOpenAI(base_url=settings.llm_base_url, api_key=settings.llm_api_key)
+model = OpenAIChatCompletionsModel(model=settings.llm_model, openai_client=client)
+model_settings = ModelSettings(
+    temperature=settings.llm_temperature,
+    max_tokens=settings.llm_max_tokens,
+    top_p=settings.llm_top_p,
+    extra_body={
+        "top_k": settings.llm_top_k,
+        "chat_template_kwargs": {"enable_thinking": settings.llm_enable_thinking},
+    },
+)
 
 
 def system_prompt() -> str:
@@ -52,8 +39,17 @@ def system_prompt() -> str:
     )
 
 
-def _instructions(ctx: RunContextWrapper[AgentContext], agent: Agent[AgentContext]) -> str:
+def instructions(ctx: RunContextWrapper[AgentContext], agent: Agent[AgentContext]) -> str:
     return system_prompt()
+
+
+farmer_agent = Agent[AgentContext](
+    name="Farmer Assistant",
+    instructions=instructions,
+    tools=TOOLS,
+    model=model,
+    model_settings=model_settings,
+)
 
 
 def build_messages(
@@ -72,75 +68,3 @@ def strip_thinking(content: Any) -> Any:
     if not isinstance(content, str) or "</think>" not in content:
         return content
     return content.rsplit("</think>", maxsplit=1)[-1].strip()
-
-
-class FarmerAssistantAgent:
-    def __init__(
-        self,
-        model: Model,
-        model_settings: ModelSettings,
-        renile_client: ReNileClient,
-        tool_cache: ToolCache,
-        plant_disease_client: PlantDiseaseClient | None = None,
-    ) -> None:
-        self._renile_client = renile_client
-        self._tool_cache = tool_cache
-        self._plant_disease_client = plant_disease_client
-        self._agent = Agent[AgentContext](
-            name="farmer-assistant",
-            instructions=_instructions,
-            tools=TOOLS,
-            model=model,
-            model_settings=model_settings,
-        )
-
-    async def run(
-        self,
-        conversation_id: str,
-        jwt: str,
-        user_message: str,
-        history: list[MemoryMessage],
-        image: UploadedImage | None = None,
-    ) -> AgentResult:
-        started_at = perf_counter()
-        logger.info("agent_run_started history_messages=%s user_message_chars=%s", len(history), len(user_message))
-        context = AgentContext(
-            conversation_id=conversation_id,
-            jwt=jwt,
-            renile_client=self._renile_client,
-            tool_cache=self._tool_cache,
-            plant_disease_client=self._plant_disease_client,
-            image=image,
-        )
-        try:
-            # MAX_TOOL_ROUNDS tool rounds plus the model call that answers from them.
-            result = await Runner.run(
-                self._agent,
-                build_messages(history, user_message, image),
-                context=context,
-                max_turns=MAX_TOOL_ROUNDS + 1,
-            )
-        except MaxTurnsExceeded:
-            logger.warning("agent_tool_round_limit_reached max_rounds=%s", MAX_TOOL_ROUNDS)
-            return AgentResult(response=FALLBACK_RESPONSE, tool_outputs=[])
-
-        tool_outputs = collect_tool_outputs(result.new_items)
-        response = strip_thinking(result.final_output) or FALLBACK_RESPONSE
-
-        logger.info(
-            "agent_run_completed response_chars=%s tool_messages=%s latency_ms=%s",
-            len(response),
-            len(tool_outputs),
-            int((perf_counter() - started_at) * 1000),
-        )
-        return AgentResult(response=response, tool_outputs=tool_outputs)
-
-
-def collect_tool_outputs(items: list[Any]) -> list[ToolOutput]:
-    # Output items carry only the call_id; the tool name lives on the matching call item.
-    names = {item.raw_item.call_id: item.raw_item.name for item in items if isinstance(item, ToolCallItem)}
-    return [
-        ToolOutput(name=names.get(item.raw_item["call_id"], ""), output=str(item.output))
-        for item in items
-        if isinstance(item, ToolCallOutputItem)
-    ]

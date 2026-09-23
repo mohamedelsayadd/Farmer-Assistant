@@ -38,6 +38,7 @@ async def test_tool_cache_stores_and_loads_processed_result() -> None:
 
     assert result == {"daily_rows": []}
     assert list(redis.ttls.values()) == [3600]
+    assert list(redis.data.values()) == [json.dumps({"daily_rows": []})]
 
 
 @pytest.mark.asyncio
@@ -75,11 +76,11 @@ async def test_tool_cache_key_includes_arguments_hash() -> None:
 
 
 @pytest.mark.asyncio
-async def test_tool_cache_returns_none_for_invalid_payload() -> None:
+async def test_tool_cache_returns_none_for_invalid_json() -> None:
     redis = FakeRedis()
     cache = ToolCache(redis=redis, ttl_seconds=3600)  # type: ignore[arg-type]
     key = ToolCache._key("conversation-1", "get_current_readings", {})  # noqa: SLF001
-    redis.data[key] = json.dumps({"content": "not-json"})
+    redis.data[key] = "not-json"
 
     result = await cache.get("conversation-1", "get_current_readings", {})
 

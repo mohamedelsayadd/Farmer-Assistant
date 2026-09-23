@@ -49,13 +49,8 @@ class Settings(BaseSettings):
     http_timeout_seconds: float = Field(alias="HTTP_TIMEOUT_SECONDS", gt=0)
 
     asr_provider: str = Field(alias="ASR_PROVIDER")
-    asr_model: str = Field(alias="ASR_MODEL")
-    asr_device: str = Field(alias="ASR_DEVICE")
     asr_language: str | None = Field(alias="ASR_LANGUAGE")
     asr_max_audio_bytes: int = Field(alias="ASR_MAX_AUDIO_BYTES", gt=0)
-    asr_compute_type: str = Field(alias="ASR_COMPUTE_TYPE")
-    asr_dtype: str = Field(alias="ASR_DTYPE")
-    asr_max_new_tokens: int = Field(alias="ASR_MAX_NEW_TOKENS", gt=0)
     asr_remote_base_url: str = Field(alias="ASR_REMOTE_BASE_URL")
     asr_remote_transcribe_path: str = Field(alias="ASR_REMOTE_TRANSCRIBE_PATH")
     asr_remote_timeout_seconds: float = Field(alias="ASR_REMOTE_TIMEOUT_SECONDS", gt=0)

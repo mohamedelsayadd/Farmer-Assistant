@@ -33,16 +33,13 @@ class RedisMemory:
         return messages
 
     async def append(self, conversation_id: str, role: Role, content: str) -> None:
-        await self._append_payload(conversation_id, {"role": role, "content": content})
-
-    async def _append_payload(self, conversation_id: str, message: dict[str, str]) -> None:
         key = self._key(conversation_id)
-        payload = json.dumps(message, ensure_ascii=False)
+        payload = json.dumps({"role": role, "content": content}, ensure_ascii=False)
         logger.debug(
             "memory_append_started conversation_id=%s role=%s content_chars=%s",
             conversation_id,
-            message["role"],
-            len(message["content"]),
+            role,
+            len(content),
         )
         async with self._redis.pipeline(transaction=True) as pipe:
             pipe.rpush(key, payload)
@@ -52,7 +49,7 @@ class RedisMemory:
         logger.debug(
             "memory_append_completed conversation_id=%s role=%s ttl_seconds=%s max_messages=%s",
             conversation_id,
-            message["role"],
+            role,
             self._ttl_seconds,
             self._max_messages,
         )

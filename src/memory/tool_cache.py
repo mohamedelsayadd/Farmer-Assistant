@@ -19,34 +19,15 @@ class ToolCache:
         tool_name: str,
         arguments: dict[str, Any],
     ) -> dict[str, Any] | list[Any] | None:
-        key = self._key(conversation_id, tool_name, arguments)
-        raw_value = await self._redis.get(key)
+        raw_value = await self._redis.get(self._key(conversation_id, tool_name, arguments))
         if raw_value is None:
             logger.info("tool_cache_miss conversation_id=%s tool_name=%s", conversation_id, tool_name)
             return None
-
-        value = raw_value.decode("utf-8") if isinstance(raw_value, bytes) else raw_value
         try:
-            payload = json.loads(value)
+            result = json.loads(raw_value)
         except json.JSONDecodeError:
             logger.warning("tool_cache_invalid_json conversation_id=%s tool_name=%s", conversation_id, tool_name)
             return None
-
-        content = payload.get("content")
-        if not isinstance(content, str):
-            logger.warning("tool_cache_invalid_content conversation_id=%s tool_name=%s", conversation_id, tool_name)
-            return None
-
-        try:
-            result = json.loads(content)
-        except json.JSONDecodeError:
-            logger.warning("tool_cache_invalid_result_json conversation_id=%s tool_name=%s", conversation_id, tool_name)
-            return None
-
-        if not isinstance(result, (dict, list)):
-            logger.warning("tool_cache_invalid_result_type conversation_id=%s tool_name=%s", conversation_id, tool_name)
-            return None
-
         logger.info("tool_cache_hit conversation_id=%s tool_name=%s", conversation_id, tool_name)
         return result
 
@@ -57,17 +38,8 @@ class ToolCache:
         arguments: dict[str, Any],
         result: dict[str, Any] | list[Any],
     ) -> None:
-        key = self._key(conversation_id, tool_name, arguments)
         content = json.dumps(result, ensure_ascii=False)
-        payload = json.dumps(
-            {
-                "tool_name": tool_name,
-                "arguments": arguments,
-                "content": content,
-            },
-            ensure_ascii=False,
-        )
-        await self._redis.setex(key, self._ttl_seconds, payload)
+        await self._redis.setex(self._key(conversation_id, tool_name, arguments), self._ttl_seconds, content)
         logger.info(
             "tool_cache_set conversation_id=%s tool_name=%s content_chars=%s ttl_seconds=%s",
             conversation_id,

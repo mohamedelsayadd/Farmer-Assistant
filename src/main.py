@@ -4,7 +4,6 @@ from typing import AsyncIterator
 from fastapi import FastAPI
 from redis.asyncio import Redis
 
-from agent.agent import FarmerAssistantAgent
 from api.v1.endpoints.chat import router as chat_router
 from core.config import get_settings
 from core.logging import configure_logging
@@ -12,7 +11,6 @@ from core.observability import create_langfuse_client
 from memory.redis_memory import RedisMemory
 from memory.tool_cache import ToolCache
 from providers.ASR.factory import create_asr_provider
-from providers.llm import create_chat_model, create_model_settings
 from providers.plant_disease_client import PlantDiseaseClient
 from providers.renile_client import ReNileClient
 from services.chat_service import ChatService
@@ -51,13 +49,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     tool_cache = ToolCache(redis=tool_cache_redis, ttl_seconds=settings.redis_tool_cache_ttl_seconds)
     app.state.chat_service = ChatService(
         memory=memory,
-        agent=FarmerAssistantAgent(
-            create_chat_model(settings),
-            create_model_settings(settings),
-            renile_client,
-            tool_cache,
-            plant_disease_client,
-        ),
+        renile_client=renile_client,
+        tool_cache=tool_cache,
+        plant_disease_client=plant_disease_client,
     )
 
     try:

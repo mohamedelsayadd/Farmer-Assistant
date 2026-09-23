@@ -40,10 +40,6 @@ class FMSVoiceASRProvider:
         self._timeout = settings.asr_remote_timeout_seconds
         self._language = language or None
 
-    async def load_model(self) -> None:
-        """No-op: the weights live in the FMS-Voice service, not in this process."""
-        logger.info("asr_model_skipped provider=fms_voice base_url=%s", self._base_url)
-
     async def transcribe_wav(self, audio_bytes: bytes) -> str:
         started_at = perf_counter()
         logger.info(

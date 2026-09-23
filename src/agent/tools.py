@@ -2,11 +2,10 @@ import json
 import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Annotated, Any
+from typing import Any
 
 import httpx
 from agents import ModelBehaviorError, RunContextWrapper, function_tool
-from pydantic import Field
 
 from core.logging import json_preview
 from memory.tool_cache import ToolCache
@@ -21,7 +20,7 @@ ToolResult = dict[str, Any] | list[dict[str, Any]]
 TOOL_FAILED_MESSAGE = "Tool failed temporarily."
 
 
-@dataclass(frozen=True)
+@dataclass
 class AgentContext:
     """Per-request runtime context. Injected into tools and never shown to the model."""
 
@@ -31,15 +30,23 @@ class AgentContext:
     tool_cache: ToolCache
     plant_disease_client: PlantDiseaseClient | None = None
     image: UploadedImage | None = None
+    # Set by plant_diseases_detection; ChatService lifts source/disease from it onto the response.
+    plant_prediction: dict[str, Any] | None = None
 
 
 Context = RunContextWrapper[AgentContext]
-DeviceId = Annotated[
-    str,
-    Field(description="Real device_id copied from get_devices_ids context. This must be an ID, not the device name."),
-]
 
 
+def tool_failed(ctx: RunContextWrapper[Any], error: Exception) -> str:
+    # Upstream/argument failures go back to the model so it can continue; anything
+    # else (e.g. RedisError) is re-raised and reaches ChatService.
+    if not isinstance(error, (ValueError, httpx.HTTPError, ModelBehaviorError)):
+        raise error
+    logger.error("tool_call_failed error_type=%s", type(error).__name__, exc_info=error)
+    return TOOL_FAILED_MESSAGE
+
+
+@function_tool(failure_error_function=tool_failed)
 async def plant_diseases_detection(ctx: Context) -> str:
     """Diagnose an uploaded plant image for disease. Use when the current user request includes a plant image upload."""
     context = ctx.context
@@ -53,9 +60,11 @@ async def plant_diseases_detection(ctx: Context) -> str:
         filename=image.filename,
         content_type=image.content_type,
     )
+    context.plant_prediction = prediction
     return _dump("plant_diseases_detection", prediction)
 
 
+@function_tool(failure_error_function=tool_failed)
 async def get_current_readings(ctx: Context) -> str:
     """Get the latest farm sensor readings. Use for current, now, latest, or live readings questions."""
     context = ctx.context
@@ -63,22 +72,20 @@ async def get_current_readings(ctx: Context) -> str:
     return _dump("get_current_readings", result)
 
 
+@function_tool(failure_error_function=tool_failed)
 async def get_devices_ids(ctx: Context) -> str:
     """Get the user's available farm devices and their IDs. Required before answering historical readings questions."""
     return _dump("get_devices_ids", await _devices(ctx.context))
 
 
-async def get_last_duration_summary(
-    ctx: Context,
-    device_id: DeviceId,
-    start_time: Annotated[
-        str,
-        Field(description="Start time in format YYYY-MM-DD HH:mm, resolved using today's date from the system prompt."),
-    ],
-) -> str:
+@function_tool(failure_error_function=tool_failed)
+async def get_last_duration_summary(ctx: Context, device_id: str, start_time: str) -> str:
     """Get historical daily summary readings for a selected device and period.
-
     Use only after get_devices_ids returned the real device_id. NEVER pass a device name as device_id.
+
+    Args:
+        device_id: Real device_id copied from get_devices_ids context. This must be an ID, not the device name.
+        start_time: Start time in format YYYY-MM-DD HH:mm, resolved using today's date from the system prompt.
     """
 
     async def fetch(resolved_id: str) -> dict[str, Any]:
@@ -91,20 +98,14 @@ async def get_last_duration_summary(
     return await _historical("get_last_duration_summary", ctx.context, device_id, start_time, fetch)
 
 
-async def get_specific_time_readings(
-    ctx: Context,
-    device_id: DeviceId,
-    start_time: Annotated[
-        str,
-        Field(
-            description="Specific day start time in format YYYY-MM-DD HH:mm, "
-            "resolved using today's date from the system prompt."
-        ),
-    ],
-) -> str:
+@function_tool(failure_error_function=tool_failed)
+async def get_specific_time_readings(ctx: Context, device_id: str, start_time: str) -> str:
     """Get historical hourly readings for a selected device on a specific previous day or time.
-
     Use only after get_devices_ids returned the real device_id. NEVER pass a device name as device_id.
+
+    Args:
+        device_id: Real device_id copied from get_devices_ids context. This must be an ID, not the device name.
+        start_time: Specific day start time in format YYYY-MM-DD HH:mm, resolved using today's date from the system prompt.
     """
 
     async def fetch(resolved_id: str) -> dict[str, Any]:
@@ -117,24 +118,12 @@ async def get_specific_time_readings(
     return await _historical("get_specific_time_readings", ctx.context, device_id, start_time, fetch)
 
 
-def _tool_failed(ctx: RunContextWrapper[Any], error: Exception) -> str:
-    # Upstream/argument failures go back to the model so it can continue; anything
-    # else (e.g. RedisError) is re-raised and reaches ChatService.
-    if not isinstance(error, (ValueError, httpx.HTTPError, ModelBehaviorError)):
-        raise error
-    logger.error("tool_call_failed error_type=%s", type(error).__name__, exc_info=error)
-    return TOOL_FAILED_MESSAGE
-
-
 TOOLS = [
-    function_tool(tool_function, failure_error_function=_tool_failed)
-    for tool_function in (
-        plant_diseases_detection,
-        get_current_readings,
-        get_devices_ids,
-        get_last_duration_summary,
-        get_specific_time_readings,
-    )
+    plant_diseases_detection,
+    get_current_readings,
+    get_devices_ids,
+    get_last_duration_summary,
+    get_specific_time_readings,
 ]
 
 
