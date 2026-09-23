@@ -18,7 +18,7 @@ Built on FastAPI, the agent calls backend tools to read live and historical ReNi
 
 ## Stack
 
-Python 3.12 · FastAPI · LangChain `create_agent` · OpenAI-compatible LLM · Redis · HTTPX · FMS-Voice ASR service (Cohere Transcribe Arabic) · Langfuse · pytest
+Python 3.12 · FastAPI · OpenAI Agents SDK · OpenAI-compatible LLM · Redis · HTTPX · FMS-Voice ASR service (Cohere Transcribe Arabic) · Langfuse · pytest
 
 ## Quick Start
 
@@ -102,7 +102,7 @@ The ones you'll usually change:
 ## How It Works
 
 ```
-request ──▶ parse (JSON / audio / image) ──▶ create_agent ──▶ response
+request ──▶ parse (JSON / audio / image) ──▶ Agents SDK Runner ──▶ response
                                                │
                                                ├─ current readings  ──┐
                                                ├─ historical data   ──┼─▶ ReNile API
@@ -110,7 +110,7 @@ request ──▶ parse (JSON / audio / image) ──▶ create_agent ──▶ 
                                                └─ plant diagnosis   ───▶ Disease API
 ```
 
-The agent is a LangChain `create_agent` with a bounded tool-calling loop (at most 4 tool rounds). Historical questions always resolve a real device ID first, and tool results are cached in Redis so repeat questions don't re-hit ReNile. Readings before 2026-01-01 are out of range, and off-topic questions are declined.
+The agent is an OpenAI Agents SDK `Agent` run by `Runner`, with a bounded tool-calling loop (at most 4 tool rounds). Historical questions always resolve a real device ID first, and tool results are cached in Redis so repeat questions don't re-hit ReNile. Readings before 2026-01-01 are out of range, and off-topic questions are declined.
 
 ## Development
 

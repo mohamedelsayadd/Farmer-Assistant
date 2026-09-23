@@ -4,14 +4,16 @@ from typing import Any
 
 import httpx
 import pytest
-from langchain_core.callbacks import AsyncCallbackHandler
-from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import AIMessage, BaseMessage, SystemMessage, ToolMessage
-from langchain_core.outputs import ChatGeneration, ChatResult
-from pydantic import Field
+from agents import Model, ModelResponse, ModelSettings, Usage, UserError
+from openinference.instrumentation.openai_agents import OpenAIAgentsInstrumentor
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+from openai.types.responses import ResponseFunctionToolCall, ResponseOutputMessage, ResponseOutputText
+from redis.exceptions import RedisError
 
 from agent.agent import FALLBACK_RESPONSE, MAX_TOOL_ROUNDS, FarmerAssistantAgent
-from agent.tools import resolve_device_id
+from agent.tools import TOOL_FAILED_MESSAGE, resolve_device_id
 from conftest import FakeToolCache
 from models.schemas.chat import UploadedImage
 
@@ -23,28 +25,47 @@ HISTORY = [
     {"role": "assistant", "content": "من فضلك اختر الجهاز المطلوب:\n1. Device 1\n7. GreenHouse Control Unit"},
 ]
 
-
-class FakeChatModel(BaseChatModel):
-    """Replays scripted AI messages and records every prompt it receives."""
-
-    responses: list[AIMessage]
-    calls: list[list[BaseMessage]] = Field(default_factory=list)
-
-    @property
-    def _llm_type(self) -> str:
-        return "fake"
-
-    def bind_tools(self, tools: Any, **kwargs: Any) -> "FakeChatModel":
-        return self
-
-    def _generate(self, messages: list[BaseMessage], stop: Any = None, run_manager: Any = None, **kwargs: Any) -> ChatResult:
-        self.calls.append(list(messages))
-        message = self.responses[min(len(self.calls), len(self.responses)) - 1].model_copy(deep=True)
-        return ChatResult(generations=[ChatGeneration(message=message)])
+ModelOutput = list[Any]
 
 
-def tool_call(name: str, args: dict | None = None, call_id: str = "call-1") -> AIMessage:
-    return AIMessage("", tool_calls=[{"name": name, "args": args or {}, "id": call_id}])
+class FakeModel(Model):
+    """Replays scripted model outputs and records the instructions and input of every call."""
+
+    def __init__(self, responses: list[ModelOutput]) -> None:
+        self.responses = responses
+        self.calls: list[tuple[str | None, list[Any]]] = []
+
+    async def get_response(self, system_instructions: str | None, input: Any, *args: Any, **kwargs: Any) -> ModelResponse:
+        self.calls.append((system_instructions, json.loads(json.dumps(input, default=_dump_item))))
+        output = self.responses[min(len(self.calls), len(self.responses)) - 1]
+        return ModelResponse(output=output, usage=Usage(), response_id=None)
+
+    def stream_response(self, *args: Any, **kwargs: Any) -> Any:
+        raise NotImplementedError
+
+
+def _dump_item(item: Any) -> Any:
+    return item.model_dump()
+
+
+def answer(text: str) -> ModelOutput:
+    return [
+        ResponseOutputMessage(
+            id="msg-1",
+            type="message",
+            role="assistant",
+            status="completed",
+            content=[ResponseOutputText(type="output_text", text=text, annotations=[])],
+        )
+    ]
+
+
+def tool_call(name: str, args: dict | None = None, call_id: str = "call-1") -> ModelOutput:
+    return [
+        ResponseFunctionToolCall(
+            type="function_call", name=name, arguments=json.dumps(args or {}), call_id=call_id, id=f"fc-{call_id}"
+        )
+    ]
 
 
 class FakeReNileClient:
@@ -76,19 +97,18 @@ class FakePlantDiseaseClient:
 
 
 def make_agent(
-    responses: list[AIMessage],
+    responses: list[ModelOutput],
     renile_client: FakeReNileClient | None = None,
-    tool_cache: FakeToolCache | None = None,
-    callbacks: list | None = None,
-) -> tuple[FarmerAssistantAgent, FakeChatModel, FakeReNileClient]:
-    model = FakeChatModel(responses=responses)
+    tool_cache: Any = None,
+) -> tuple[FarmerAssistantAgent, FakeModel, FakeReNileClient]:
+    model = FakeModel(responses)
     renile_client = renile_client or FakeReNileClient()
     agent = FarmerAssistantAgent(
         model,
+        ModelSettings(),
         renile_client,  # type: ignore[arg-type]
         tool_cache or FakeToolCache(),  # type: ignore[arg-type]
         FakePlantDiseaseClient(),  # type: ignore[arg-type]
-        callbacks=callbacks,
     )
     return agent, model, renile_client
 
@@ -115,25 +135,24 @@ def test_resolve_device_id_returns_none_for_blank_and_unknown() -> None:
 
 
 async def test_answers_directly_without_tools() -> None:
-    agent, model, _ = make_agent([AIMessage("السماد المناسب هو ...")])
+    agent, model, _ = make_agent([answer("السماد المناسب هو ...")])
 
     result = await run(agent, "إيه أحسن سماد للطماطم؟", history=[])
 
     assert result.response == "السماد المناسب هو ..."
-    assert result.tool_messages == []
+    assert result.tool_outputs == []
     assert len(model.calls) == 1
 
 
 async def test_prompt_has_dated_system_message_history_and_image_marker_only_on_current_turn() -> None:
-    agent, model, _ = make_agent([AIMessage("تمام")])
+    agent, model, _ = make_agent([answer("تمام")])
 
     await run(agent, "ايه المرض ده؟", image=UploadedImage(filename="p.jpg", content_type="image/jpeg", content=b"x"))
 
-    prompt = model.calls[0]
-    assert isinstance(prompt[0], SystemMessage)
-    assert "تاريخ النهاردة:" in prompt[0].content
-    assert [message.content for message in prompt[1:3]] == [item["content"] for item in HISTORY]
-    assert prompt[-1].content == "ايه المرض ده؟\n\n[The user attached a plant image with this message.]"
+    instructions, prompt = model.calls[0]
+    assert "تاريخ النهاردة:" in instructions
+    assert prompt[:2] == HISTORY
+    assert prompt[-1] == {"role": "user", "content": "ايه المرض ده؟\n\n[The user attached a plant image with this message.]"}
 
 
 async def test_multi_round_device_selection_follow_up() -> None:
@@ -141,24 +160,24 @@ async def test_multi_round_device_selection_follow_up() -> None:
         [
             tool_call("get_devices_ids"),
             tool_call("get_last_duration_summary", {"device_id": "7", "start_time": "2026-06-18 00:00"}, "call-2"),
-            AIMessage("ده ملخص درجات الحرارة لآخر أسبوع."),
+            answer("ده ملخص درجات الحرارة لآخر أسبوع."),
         ]
     )
 
     result = await run(agent)
 
     assert result.response == "ده ملخص درجات الحرارة لآخر أسبوع."
-    assert [len(prompt) for prompt in model.calls] == [4, 6, 8]
+    assert [len(prompt) for _, prompt in model.calls] == [3, 5, 7]
     assert renile_client.summary_device_ids == ["device-7"]
-    assert [message.name for message in result.tool_messages] == ["get_devices_ids", "get_last_duration_summary"]
-    assert json.loads(result.tool_messages[1].content)["daily_rows"] == [{"date": "2026-06-18", "Temperature": 28.5}]
+    assert [item.name for item in result.tool_outputs] == ["get_devices_ids", "get_last_duration_summary"]
+    assert json.loads(result.tool_outputs[1].output)["daily_rows"] == [{"date": "2026-06-18", "Temperature": 28.5}]
 
 
 async def test_historical_tool_resolves_device_name_before_api_call() -> None:
     agent, _, renile_client = make_agent(
         [
             tool_call("get_last_duration_summary", {"device_id": "GreenHouse Control Unit", "start_time": "2026-06-18 00:00"}),
-            AIMessage("done"),
+            answer("done"),
         ]
     )
 
@@ -171,14 +190,14 @@ async def test_unresolved_device_returns_device_list_instead_of_calling_renile()
     agent, _, renile_client = make_agent(
         [
             tool_call("get_last_duration_summary", {"device_id": "Mars Rover", "start_time": "2026-06-18 00:00"}),
-            AIMessage("اختار الجهاز"),
+            answer("اختار الجهاز"),
         ]
     )
 
     result = await run(agent)
 
     assert renile_client.summary_device_ids == []
-    assert json.loads(result.tool_messages[0].content) == DEVICES
+    assert json.loads(result.tool_outputs[0].output) == DEVICES
 
 
 async def test_cached_tool_result_skips_renile() -> None:
@@ -195,7 +214,7 @@ async def test_cached_tool_result_skips_renile() -> None:
     agent, _, renile_client = make_agent(
         [
             tool_call("get_last_duration_summary", {"device_id": "device-7", "start_time": "2026-06-18 00:00"}),
-            AIMessage("done"),
+            answer("done"),
         ],
         tool_cache=tool_cache,
     )
@@ -203,7 +222,7 @@ async def test_cached_tool_result_skips_renile() -> None:
     result = await run(agent)
 
     assert renile_client.summary_device_ids == []
-    assert json.loads(result.tool_messages[0].content) == cached_summary
+    assert json.loads(result.tool_outputs[0].output) == cached_summary
 
 
 async def test_round_limit_returns_fallback() -> None:
@@ -213,72 +232,81 @@ async def test_round_limit_returns_fallback() -> None:
 
     assert result.response == FALLBACK_RESPONSE
     assert len(model.calls) == MAX_TOOL_ROUNDS + 1
-    assert len(result.tool_messages) == MAX_TOOL_ROUNDS
 
 
 async def test_failed_tool_is_reported_to_model_and_run_continues(caplog: pytest.LogCaptureFixture) -> None:
     caplog.set_level(logging.INFO)
     agent, model, _ = make_agent(
-        [tool_call("get_current_readings"), AIMessage("مش قادر أجيب القراءات دلوقتي.")],
+        [tool_call("get_current_readings"), answer("مش قادر أجيب القراءات دلوقتي.")],
         renile_client=FakeReNileClient(fail=True),
     )
 
     result = await run(agent, "القراءات؟", history=[])
 
     assert result.response == "مش قادر أجيب القراءات دلوقتي."
-    assert result.tool_messages[0].content == "Tool failed temporarily."
-    assert model.calls[1][-1].content == "Tool failed temporarily."
+    assert result.tool_outputs[0].output == TOOL_FAILED_MESSAGE
+    assert model.calls[1][1][-1]["output"] == TOOL_FAILED_MESSAGE
     assert "tool_call_failed" in caplog.text
     assert "runtime-jwt" not in caplog.text
 
 
 async def test_plant_tool_without_image_fails() -> None:
-    agent, _, _ = make_agent([tool_call("plant_diseases_detection"), AIMessage("ابعت صورة")])
+    agent, _, _ = make_agent([tool_call("plant_diseases_detection"), answer("ابعت صورة")])
 
     result = await run(agent, "شخص النبات", history=[])
 
-    assert result.tool_messages[0].content == "Tool failed temporarily."
-    assert result.tool_messages[0].status == "error"
+    assert result.tool_outputs[0].output == TOOL_FAILED_MESSAGE
+
+
+async def test_redis_error_in_tool_is_not_reported_to_model() -> None:
+    class BrokenToolCache(FakeToolCache):
+        async def get(self, **kwargs: Any) -> Any:
+            raise RedisError("redis down")
+
+    agent, _, _ = make_agent([tool_call("get_current_readings"), answer("done")], tool_cache=BrokenToolCache())
+
+    # The SDK wraps tool exceptions in UserError (an AgentsException, which ChatService catches).
+    with pytest.raises(UserError) as error:
+        await run(agent, "القراءات؟", history=[])
+    assert isinstance(error.value.__cause__, RedisError)
 
 
 async def test_plant_tool_with_image_returns_prediction() -> None:
-    agent, _, _ = make_agent([tool_call("plant_diseases_detection"), AIMessage("النبات مصاب")])
+    agent, _, _ = make_agent([tool_call("plant_diseases_detection"), answer("النبات مصاب")])
     image = UploadedImage(filename="p.jpg", content_type="image/jpeg", content=b"secret-image-bytes")
 
     result = await run(agent, "شخص النبات", history=[], image=image)
 
-    assert json.loads(result.tool_messages[0].content)["disease"] == "potato early blight"
+    assert json.loads(result.tool_outputs[0].output)["disease"] == "potato early blight"
 
 
 async def test_final_answer_has_thinking_stripped() -> None:
-    agent, _, _ = make_agent([AIMessage("<think>reasoning</think>الإجابة النهائية")])
+    agent, _, _ = make_agent([answer("<think>reasoning</think>الإجابة النهائية")])
 
     result = await run(agent, "اشرح", history=[])
 
     assert result.response == "الإجابة النهائية"
 
 
-class RecordingCallbackHandler(AsyncCallbackHandler):
-    def __init__(self) -> None:
-        self.events: list[str] = []
+async def test_jwt_and_image_bytes_never_reach_model_or_traces(caplog: pytest.LogCaptureFixture) -> None:
+    caplog.set_level(logging.DEBUG)
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    instrumentor = OpenAIAgentsInstrumentor()
+    instrumentor.instrument(tracer_provider=provider)
+    try:
+        agent, model, _ = make_agent(
+            [tool_call("plant_diseases_detection"), tool_call("get_current_readings", call_id="call-2"), answer("done")]
+        )
+        image = UploadedImage(filename="p.jpg", content_type="image/jpeg", content=b"secret-image-bytes")
 
-    def _record(self, *args: Any, **kwargs: Any) -> None:
-        self.events.append(repr((args, kwargs)))
+        await run(agent, "شخص النبات", image=image)
+    finally:
+        instrumentor.uninstrument()
 
-    on_chain_start = on_chain_end = on_tool_start = on_tool_end = on_chat_model_start = on_llm_end = _record
-
-
-async def test_jwt_and_image_bytes_never_reach_model_or_traces() -> None:
-    recorder = RecordingCallbackHandler()
-    agent, model, _ = make_agent(
-        [tool_call("plant_diseases_detection"), tool_call("get_current_readings", call_id="call-2"), AIMessage("done")],
-        callbacks=[recorder],
-    )
-    image = UploadedImage(filename="p.jpg", content_type="image/jpeg", content=b"secret-image-bytes")
-
-    await run(agent, "شخص النبات", image=image)
-
-    assert recorder.events
-    traced = "\n".join(recorder.events) + repr(model.calls)
+    spans = exporter.get_finished_spans()
+    assert spans
+    traced = repr([(span.name, dict(span.attributes or {})) for span in spans]) + repr(model.calls) + caplog.text
     assert "runtime-jwt" not in traced
     assert "secret-image-bytes" not in traced

@@ -8,3 +8,5 @@ src/*.egg-info/
 API_DOCUMENTATION.md
 *.ipynb
 streamlit_app.py
+
+openai_agents_sdk_guide/

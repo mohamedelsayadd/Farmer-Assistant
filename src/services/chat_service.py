@@ -2,12 +2,13 @@ import json
 import logging
 from time import perf_counter
 
-from langchain_core.messages import ToolMessage
+from agents import AgentsException
 from langfuse import get_client, observe, propagate_attributes
 from openai import OpenAIError
 from redis.exceptions import RedisError
 
-from agent.agent import FarmerAssistantAgent
+from agent.agent import FarmerAssistantAgent, ToolOutput
+from agent.tools import TOOL_FAILED_MESSAGE
 from memory.redis_memory import RedisMemory
 from models.schemas.chat import ChatRequest, ChatResponse
 
@@ -58,9 +59,9 @@ class ChatService:
                 return ChatResponse(
                     conversation_id=request.conversation_id,
                     message=agent_result.response,
-                    **plant_disease_metadata(agent_result.tool_messages),
+                    **plant_disease_metadata(agent_result.tool_outputs),
                 )
-            except (OpenAIError, RedisError):
+            except (OpenAIError, AgentsException, RedisError):
                 elapsed_ms = int((perf_counter() - started_at) * 1000)
                 logger.exception(
                     "chat_request_failed conversation_id=%s latency_ms=%s",
@@ -76,12 +77,12 @@ class ChatService:
                 )
 
 
-def plant_disease_metadata(tool_messages: list[ToolMessage]) -> dict[str, str | None]:
-    for message in tool_messages:
-        if message.name != "plant_diseases_detection" or message.status == "error":
+def plant_disease_metadata(tool_outputs: list[ToolOutput]) -> dict[str, str | None]:
+    for tool_output in tool_outputs:
+        if tool_output.name != "plant_diseases_detection" or tool_output.output == TOOL_FAILED_MESSAGE:
             continue
         try:
-            payload = json.loads(message.content)
+            payload = json.loads(tool_output.output)
         except (json.JSONDecodeError, TypeError):
             logger.warning("plant_disease_metadata_parse_failed")
             return {"source": None, "disease": None}

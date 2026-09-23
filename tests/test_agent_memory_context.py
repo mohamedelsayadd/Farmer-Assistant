@@ -1,5 +1,3 @@
-from langchain_core.messages import AIMessage, HumanMessage
-
 from agent.agent import build_messages, system_prompt
 
 
@@ -13,9 +11,9 @@ def test_build_messages_keeps_history_as_plain_turns_without_system_or_tool_cont
     )
 
     assert messages == [
-        HumanMessage("درجة الحرارة كام؟"),
-        AIMessage("درجة الحرارة ٢٢."),
-        HumanMessage("والرطوبة؟"),
+        {"role": "user", "content": "درجة الحرارة كام؟"},
+        {"role": "assistant", "content": "درجة الحرارة ٢٢."},
+        {"role": "user", "content": "والرطوبة؟"},
     ]
 
 

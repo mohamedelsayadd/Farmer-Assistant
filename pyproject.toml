@@ -1,7 +1,7 @@
 [project]
 name = "farm-assistant"
 version = "0.1.0"
-description = "Arabic farm chatbot backend using FastAPI and a LangChain create_agent over an OpenAI-compatible LLM."
+description = "Arabic farm chatbot backend using FastAPI and an OpenAI Agents SDK agent over an OpenAI-compatible LLM."
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
 dependencies = [
@@ -20,8 +20,8 @@ dependencies = [
     "librosa>=0.11.0",
     "accelerate>=1.14.0",
     "langfuse>=4.15.3",
-    "langchain>=1.4.2",
-    "langchain-openai>=1.6.2",
+    "openai-agents>=0.22.3",
+    "openinference-instrumentation-openai-agents>=2.4.1",
 ]
 
 [dependency-groups]

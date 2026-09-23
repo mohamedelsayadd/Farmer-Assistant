@@ -3,7 +3,6 @@ import logging
 from types import SimpleNamespace
 
 import pytest
-from langchain_core.utils.function_calling import convert_to_openai_tool
 
 from agent.tools import (
     TOOLS,
@@ -17,7 +16,7 @@ from agent.tools import (
 from conftest import FakeToolCache
 from models.schemas.chat import UploadedImage
 
-SCHEMAS = {schema["function"]["name"]: schema["function"] for schema in map(convert_to_openai_tool, TOOLS)}
+SCHEMAS = {tool.name: {"description": tool.description, "parameters": tool.params_json_schema} for tool in TOOLS}
 
 
 def test_tool_schemas_do_not_expose_jwt_or_runtime() -> None:
@@ -139,7 +138,7 @@ def _runtime(tool_cache: FakeToolCache | None = None, image: UploadedImage | Non
 
 
 async def test_current_readings_tool_returns_backend_response_unchanged() -> None:
-    result = await get_current_readings.coroutine(runtime=_runtime())
+    result = await get_current_readings(_runtime())
 
     assert json.loads(result) == BACKEND_CURRENT_READINGS
 
@@ -147,7 +146,7 @@ async def test_current_readings_tool_returns_backend_response_unchanged() -> Non
 async def test_current_readings_tool_logs_do_not_include_jwt(caplog: pytest.LogCaptureFixture) -> None:
     caplog.set_level(logging.INFO)
 
-    await get_current_readings.coroutine(runtime=_runtime())
+    await get_current_readings(_runtime())
 
     assert "runtime-jwt" not in caplog.text
     assert "tool_call_completed tool_name=get_current_readings" in caplog.text
@@ -156,20 +155,20 @@ async def test_current_readings_tool_logs_do_not_include_jwt(caplog: pytest.LogC
 async def test_current_readings_tool_caches_result_per_conversation() -> None:
     tool_cache = FakeToolCache()
 
-    await get_current_readings.coroutine(runtime=_runtime(tool_cache))
+    await get_current_readings(_runtime(tool_cache))
 
     assert tool_cache.stored_results == [("conversation-1", "get_current_readings", {}, BACKEND_CURRENT_READINGS)]
 
 
 async def test_devices_ids_tool_returns_backend_response_unchanged() -> None:
-    result = await get_devices_ids.coroutine(runtime=_runtime())
+    result = await get_devices_ids(_runtime())
 
     assert json.loads(result) == BACKEND_DEVICES_IDS
 
 
 async def test_last_duration_summary_tool_returns_processed_api_response() -> None:
-    result = await get_last_duration_summary.coroutine(
-        device_id="device-1", start_time="2026-06-01 00:00", runtime=_runtime()
+    result = await get_last_duration_summary(
+        _runtime(), device_id="device-1", start_time="2026-06-01 00:00"
     )
 
     assert json.loads(result) == {
@@ -181,8 +180,8 @@ async def test_last_duration_summary_tool_returns_processed_api_response() -> No
 
 
 async def test_specific_time_readings_tool_returns_processed_api_response() -> None:
-    result = await get_specific_time_readings.coroutine(
-        device_id="Device 1", start_time="2026-06-01 00:00", runtime=_runtime()
+    result = await get_specific_time_readings(
+        _runtime(), device_id="Device 1", start_time="2026-06-01 00:00"
     )
 
     assert json.loads(result) == {
@@ -197,7 +196,7 @@ async def test_plant_diseases_detection_tool_returns_backend_response_unchanged(
     tool_cache = FakeToolCache()
     image = UploadedImage(filename="plant.jpg", content_type="image/jpeg", content=b"fake-image")
 
-    result = await plant_diseases_detection.coroutine(runtime=_runtime(tool_cache, image=image))
+    result = await plant_diseases_detection(_runtime(tool_cache, image=image))
 
     assert json.loads(result) == {
         "is_plant": True,
@@ -212,4 +211,4 @@ async def test_plant_diseases_detection_tool_returns_backend_response_unchanged(
 
 async def test_plant_diseases_detection_tool_requires_an_image() -> None:
     with pytest.raises(ValueError):
-        await plant_diseases_detection.coroutine(runtime=_runtime())
+        await plant_diseases_detection(_runtime())

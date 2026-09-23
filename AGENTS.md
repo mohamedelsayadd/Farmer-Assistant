@@ -24,7 +24,7 @@
 
 ## Entrypoints
 - FastAPI app: `src/main.py`; routes: `/health` and `POST /api/v1/chat`.
-- `src/main.py`'s lifespan is the composition root: it builds every dependency once (Redis clients, `ChatOpenAI` model, ReNile client, plant-disease client, ASR, Langfuse callback handler) and hangs them on `app.state`. Nothing constructs its own providers; the agent receives clients through its constructor.
+- `src/main.py`'s lifespan is the composition root: it builds every dependency once (Redis clients, Agents SDK chat model + `ModelSettings`, ReNile client, plant-disease client, ASR, Langfuse client with the OpenInference Agents instrumentor) and hangs them on `app.state`. Nothing constructs its own providers; the agent receives clients through its constructor.
 - The chat endpoint takes a bare `Request`, not a typed body. `services/chat_request_processor.py` branches on content type and normalizes JSON and multipart into one `ChatRequest`.
 - JSON request schema is `jwt`, `conversation_id`, `message`. Multipart accepts `message`, `audio_file`, and/or `image_file`; `audio_file` is mutually exclusive with the other two, and at least one input is required. `wav_file` is a deprecated alias of `audio_file` and is still accepted.
 - `audio_file` may be any format ffmpeg can decode (wav, mp3, m4a, ogg, opus, webm, flac, amr). There is no filename or content-type check — the ASR backend decides, and an undecodable upload returns 422.
@@ -34,13 +34,13 @@
 - Response schema is `conversation_id`, `message`, plus optional `source`, `disease`. The endpoint sets `response_model_exclude_none=True`, so unused optional fields are absent from the payload.
 
 ## Agent And Tools
-- The agent is LangChain's `create_agent` (layer 3). Do not hand-build LangGraph nodes/edges and do not migrate to `deepagents`. `src/agent/agent.py` builds it once in `FarmerAssistantAgent.__init__`; `src/agent/tools.py` holds the `@tool` functions (`TOOLS`) and `AgentContext`; `src/agent/prompts.py` holds the prompt.
-- `create_agent` runs **statelessly** per request: no checkpointer. `run()` converts Redis history into `HumanMessage`/`AIMessage`, appends the current user turn, and invokes the graph with `context=AgentContext(...)`.
-- Middleware in `agent.py`, in order: `@dynamic_prompt` (system prompt + today's date), `@wrap_model_call` (strips Qwen `…</think>`), `@after_model` round limit, `ToolErrorMiddleware`.
-- Round limit: at most `MAX_TOOL_ROUNDS = 4` tool rounds (5 model calls). If the 5th model call still requests tools the run ends and `run()` returns the fixed `FALLBACK_RESPONSE`. Any run that does not end on a tool-free AI message also returns it.
-- Tool errors: `ValueError`/`httpx.HTTPError` become a `ToolMessage("Tool failed temporarily.", status="error")` and the model continues; other exceptions (e.g. `RedisError`) propagate to `ChatService`.
+- The agent is an OpenAI Agents SDK `Agent` run by `Runner`. Do not hand-roll the tool-calling loop. `src/agent/agent.py` builds it once in `FarmerAssistantAgent.__init__`; `src/agent/tools.py` holds the plain tool functions, `TOOLS` (each wrapped with `function_tool(..., failure_error_function=_tool_failed)`), and `AgentContext`; `src/agent/prompts.py` holds the prompt. The model is `OpenAIChatCompletionsModel` (Chat Completions, not the Responses API).
+- The agent runs **statelessly** per request: no SDK session. `run()` converts Redis history into `{role, content}` input items, appends the current user turn, and calls `Runner.run(..., context=AgentContext(...))`.
+- The `Agent`'s `instructions` is a callable that rebuilds the system prompt with today's date per run. Qwen `…</think>` is stripped from `final_output`.
+- Round limit: at most `MAX_TOOL_ROUNDS = 4` tool rounds (5 model calls). Enforced with `max_turns=MAX_TOOL_ROUNDS + 1`: if the 5th model call still requests tools, the SDK runs them and then raises `MaxTurnsExceeded`, and `run()` returns the fixed `FALLBACK_RESPONSE`. An empty final output also returns it.
+- Tool errors: `ValueError`/`httpx.HTTPError`/`ModelBehaviorError` become the tool output `"Tool failed temporarily."` (`TOOL_FAILED_MESSAGE`) and the model continues; other exceptions (e.g. `RedisError`) are re-raised, wrapped by the SDK in `UserError` with the original as `__cause__`, and `ChatService` catches them as `AgentsException`.
 - All tool calls the model emits in one turn are executed (the old first-call routing is gone).
-- Per-request data (`jwt`, `conversation_id`, `image`) and the clients (`renile_client`, `tool_cache`, `plant_disease_client`) reach tools only through `ToolRuntime[AgentContext]`, which is hidden from tool schemas. JWT must never be exposed to LLM tool schemas, prompts, Redis memory, logs, or callback/trace payloads.
+- Per-request data (`jwt`, `conversation_id`, `image`) and the clients (`renile_client`, `tool_cache`, `plant_disease_client`) reach tools only through their `RunContextWrapper[AgentContext]` first parameter, which is hidden from tool schemas. JWT must never be exposed to LLM tool schemas, prompts, Redis memory, logs, or callback/trace payloads.
 - Historical flows must call `get_devices_ids` before reading tools; historical tools require a real `device_id`.
 - Device-ID resolution is the subtle part: the model routinely passes a device name or list ordinal instead of an `_id`. The historical tools fetch the device list (cache-first) and `resolve_device_id` maps the raw value by exact id → ordinal → case-folded name. If it cannot resolve, the tool returns the device list *as its result* so the model re-asks, rather than calling ReNile with a bad ID.
 - `get_last_duration_summary` calls ReNile `/api/v1/data/` with backend-fixed `data_type=month` and returns daily rows.
@@ -49,11 +49,11 @@
 - Tools return `json.dumps(result, ensure_ascii=False)` strings.
 - `plant_diseases_detection` takes no model-supplied arguments. The image comes from `AgentContext`; the tool raises `ValueError` (→ "Tool failed temporarily.") when no image is attached. It POSTs the image as multipart to `PLANT_DISEASE_PREDICT_PATH` and passes the prediction dict through unchanged.
 - Plant-disease results bypass the Redis tool cache entirely; only ReNile tool results are cached.
-- `chat_service.plant_disease_metadata` scans the run's `ToolMessage`s (`AgentResult.tool_messages`) for a successful `plant_diseases_detection` result and lifts `source`/`disease` onto `ChatResponse`.
-- Observability: `langfuse.langchain.CallbackHandler` is passed as a callback on every agent run; `ChatService.chat` is the `@observe` root span.
+- `chat_service.plant_disease_metadata` scans the run's tool outputs (`AgentResult.tool_outputs`, `ToolOutput(name, output)` paired by `call_id`) for a non-failed `plant_diseases_detection` result and lifts `source`/`disease` onto `ChatResponse`.
+- Observability: `create_langfuse_client` calls `OpenAIAgentsInstrumentor().instrument()`, which replaces the SDK's default OpenAI trace exporter and sends agent/model/tool spans into Langfuse via OTel; `ChatService.chat` is the `@observe` root span. Do not call `set_tracing_disabled(True)` — it would silence the instrumentor too.
 
 ## Providers
-- `providers/llm.py::create_chat_model` returns a `ChatOpenAI` (sampling settings, `extra_body` `top_k` and `chat_template_kwargs.enable_thinking`). ReNile and plant-disease are plain classes in `src/providers/`.
+- `providers/llm.py::create_chat_model` returns an `OpenAIChatCompletionsModel` over `AsyncOpenAI`; `create_model_settings` returns its `ModelSettings` (sampling settings, `extra_body` `top_k` and `chat_template_kwargs.enable_thinking`). ReNile and plant-disease are plain classes in `src/providers/`.
 - ASR follows interface + factory + `providers/` (`src/providers/ASR/`). A new ASR backend goes in `providers/ASR/providers/` and is wired only in its `factory.py`. `fms_voice.py` opens an `httpx.AsyncClient` per call like `plant_disease_client.py`, so there is no client on `app.state` and nothing to tear down.
 
 ## Memory And Cache
@@ -73,7 +73,7 @@
 
 ## Test Update Map
 - Tool schema changes: update `tests/test_tools.py` because it asserts no JWT, runtime, or backend-fixed `data_type` exposure.
-- Agent orchestration, middleware, device resolution, or caching changes: update `tests/test_agent.py` (runs the real `create_agent` graph against a scripted fake chat model).
+- Agent orchestration, middleware, device resolution, or caching changes: update `tests/test_agent.py` (runs the real SDK `Runner` against a scripted fake `agents.Model`).
 - Prompt/date/language/scope changes: update `tests/test_agent_memory_context.py`.
 - Historical response processor changes (`src/services/historical_summary_processor.py`, now the only processor): update `tests/test_historical_summary_processor.py`.
 - ASR provider or factory changes (`src/providers/ASR/`): update `tests/test_asr_factory.py`, and `tests/test_asr_fms_voice.py` for the remote provider. `BASE_ENV`/`build_settings` live in `tests/conftest.py` and build `Settings` from a literal dict so no local `.env` is needed. Remote-provider tests drive `httpx.MockTransport` through the `_build_client` seam and must never reach a live URL, download models, or touch a GPU.
