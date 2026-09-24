@@ -95,3 +95,19 @@ async def test_memory_ignores_legacy_tool_context_messages() -> None:
     messages = await memory.load("conversation-1")
 
     assert messages == []
+
+
+@pytest.mark.asyncio
+async def test_memory_round_trips_the_answering_agent_name() -> None:
+    redis = FakeRedis()
+    memory = RedisMemory(redis=redis, ttl_seconds=3600, max_messages=12)  # type: ignore[arg-type]
+
+    await memory.append("conversation-1", "user", "الجهاز مش شغال")
+    await memory.append("conversation-1", "assistant", "ممكن تقولي اسم الجهاز؟", agent="Customer Support Agent")
+
+    messages = await memory.load("conversation-1")
+
+    assert messages == [
+        {"role": "user", "content": "الجهاز مش شغال"},
+        {"role": "assistant", "content": "ممكن تقولي اسم الجهاز؟", "agent": "Customer Support Agent"},
+    ]

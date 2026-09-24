@@ -2,12 +2,12 @@ import logging
 from time import perf_counter
 from typing import Any
 
-from agents import AgentsException, MaxTurnsExceeded, RunConfig, Runner
+from agents import Agent, AgentsException, MaxTurnsExceeded, RunConfig, Runner
 from langfuse import get_client, observe, propagate_attributes
 from openai import OpenAIError
 from redis.exceptions import RedisError
 
-from agent.agent import FALLBACK_RESPONSE, MAX_TOOL_ROUNDS, build_messages, farmer_agent, strip_thinking
+from agent.agent import FALLBACK_RESPONSE, MAX_TOOL_ROUNDS, build_messages, starting_agent, strip_thinking
 from agent.tools import AgentContext
 from memory.redis_memory import RedisMemory
 from memory.tool_cache import ToolCache
@@ -31,7 +31,7 @@ class ChatService:
         self._renile_client = renile_client
         self._tool_cache = tool_cache
         self._plant_disease_client = plant_disease_client
-        # Tests pass RunConfig(model=...) to swap in a fake model; production uses farmer_agent's own.
+        # Tests pass RunConfig(model=...) to swap in a fake model; production uses the agents' own.
         self._run_config = run_config or RunConfig()
 
     @observe(name="farmer-assistant-chat", capture_input=False)
@@ -62,13 +62,16 @@ class ChatService:
                     plant_disease_client=self._plant_disease_client,
                     image=request.image,
                 )
-                response = await self.run_agent(context, build_messages(history, request.message, request.image))
+                response, agent_name = await self.run_agent(
+                    starting_agent(history), context, build_messages(history, request.message, request.image)
+                )
                 await self._memory.append(request.conversation_id, "user", request.message)
-                await self._memory.append(request.conversation_id, "assistant", response)
+                await self._memory.append(request.conversation_id, "assistant", response, agent=agent_name)
                 elapsed_ms = int((perf_counter() - started_at) * 1000)
                 logger.info(
-                    "chat_request_completed conversation_id=%s response_chars=%s latency_ms=%s",
+                    "chat_request_completed conversation_id=%s agent=%s response_chars=%s latency_ms=%s",
                     request.conversation_id,
+                    agent_name,
                     len(response),
                     elapsed_ms,
                 )
@@ -92,11 +95,12 @@ class ChatService:
                     message="معلش، حصلت مشكلة مؤقتة. جرّب تاني بعد شوية.",
                 )
 
-    async def run_agent(self, context: AgentContext, messages: list[Any]) -> str:
+    async def run_agent(self, agent: Agent[AgentContext], context: AgentContext, messages: list[Any]) -> tuple[str, str]:
+        """Returns the reply and the name of the agent that produced it."""
         try:
             # MAX_TOOL_ROUNDS tool rounds plus the model call that answers from them.
             result = await Runner.run(
-                farmer_agent,
+                agent,
                 messages,
                 context=context,
                 run_config=self._run_config,
@@ -104,8 +108,8 @@ class ChatService:
             )
         except MaxTurnsExceeded:
             logger.warning("agent_tool_round_limit_reached max_rounds=%s", MAX_TOOL_ROUNDS)
-            return FALLBACK_RESPONSE
-        return strip_thinking(result.final_output) or FALLBACK_RESPONSE
+            return FALLBACK_RESPONSE, agent.name
+        return strip_thinking(result.final_output) or FALLBACK_RESPONSE, result.last_agent.name
 
 
 def plant_disease_metadata(prediction: dict[str, Any] | None) -> dict[str, str | None]:

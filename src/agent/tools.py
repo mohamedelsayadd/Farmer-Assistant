@@ -118,6 +118,16 @@ async def get_specific_time_readings(ctx: Context, device_id: str, start_time: s
     return await _historical("get_specific_time_readings", ctx.context, device_id, start_time, fetch)
 
 
+@function_tool(failure_error_function=tool_failed)
+async def get_devices_status(ctx: Context) -> str:
+    """Get the status of each of the user's devices, for troubleshooting a device problem the user reported.
+    Returns per device: _id, name, last_reading_time, readings (sensor values), connection_type (WIFI or 4G),
+    renewal_type (automatic or manual, 4G only), and renewal_date (manual 4G renewal only)."""
+    # Not cached: troubleshooting needs the freshest status.
+    context = ctx.context
+    return _dump("get_devices_status", await context.renile_client.get_devices_status(context.jwt))
+
+
 TOOLS = [
     plant_diseases_detection,
     get_current_readings,
@@ -125,6 +135,8 @@ TOOLS = [
     get_last_duration_summary,
     get_specific_time_readings,
 ]
+
+SUPPORT_TOOLS = [get_devices_status]
 
 
 async def _historical(

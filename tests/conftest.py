@@ -46,6 +46,7 @@ BASE_ENV = {
     "LANGFUSE_SECRET_KEY": "sk-lf-test",
     "LANGFUSE_PUBLIC_KEY": "pk-lf-test",
     "LANGFUSE_BASE_URL": "https://cloud.langfuse.com",
+    "LANGFUSE_OBSERVE": "false",
 }
 
 

@@ -13,7 +13,7 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanE
 from openai.types.responses import ResponseFunctionToolCall, ResponseOutputMessage, ResponseOutputText
 from redis.exceptions import RedisError
 
-from agent.agent import FALLBACK_RESPONSE, MAX_TOOL_ROUNDS
+from agent.agent import FALLBACK_RESPONSE, MAX_TOOL_ROUNDS, farmer_agent, support_agent
 from agent.tools import TOOL_FAILED_MESSAGE, resolve_device_id
 from conftest import FakeToolCache
 from models.schemas.chat import ChatRequest, ChatResponse, UploadedImage
@@ -22,6 +22,22 @@ from services.chat_service import ChatService
 DEVICES = [{"_id": f"device-{index}", "name": f"Device {index}"} for index in range(1, 7)] + [
     {"_id": "device-7", "name": "GreenHouse Control Unit"}
 ]
+DEVICES_STATUS = [
+    {
+        "_id": "device-7",
+        "name": "GreenHouse Control Unit",
+        "last_reading_time": "2026-09-01T10:00:00+00:00",
+        "readings": {"Temperature": 30.1},
+        "connection_type": "4G",
+        "renewal_type": "manual",
+        "renewal_date": "2026-09-01",
+    }
+]
+HANDOFF = "transfer_to_customer_support_agent"
+HANDBACK = "transfer_to_farmer_assistant"
+SUPPORT_AGENT = "Customer Support Agent"
+FARMER_AGENT = "Farmer Assistant"
+SUPPORT_MARKER = "ReNile Customer Support"
 HISTORY = [
     {"role": "user", "content": "قولي ملخص درجات الحرارة عندي اخر اسبوع"},
     {"role": "assistant", "content": "من فضلك اختر الجهاز المطلوب:\n1. Device 1\n7. GreenHouse Control Unit"},
@@ -75,6 +91,7 @@ class FakeReNileClient:
         self.fail = fail
         self.summary_device_ids: list[str] = []
         self.current_calls = 0
+        self.status_calls = 0
 
     async def get_devices_ids(self, jwt: str) -> list[dict]:
         assert jwt == "runtime-jwt"
@@ -86,6 +103,11 @@ class FakeReNileClient:
         if self.fail:
             raise httpx.ConnectError("renile down")
         return {"project_name": "Farm 1", "devices": []}
+
+    async def get_devices_status(self, jwt: str) -> list[dict]:
+        assert jwt == "runtime-jwt"
+        self.status_calls += 1
+        return DEVICES_STATUS
 
     async def get_last_duration_summary(self, jwt: str, device_id: str, start_time: str) -> dict:
         assert jwt == "runtime-jwt"
@@ -102,13 +124,16 @@ class FakeMemory:
     def __init__(self, history: list[dict]) -> None:
         self.history = history
         self.events: list[tuple[str, str]] = []
+        self.agents: list[str | None] = []
 
     async def load(self, conversation_id: str) -> list[dict]:
         assert conversation_id == "conversation-1"
         return self.history
 
-    async def append(self, conversation_id: str, role: str, content: str) -> None:
+    async def append(self, conversation_id: str, role: str, content: str, agent: str | None = None) -> None:
         self.events.append((role, content))
+        if role == "assistant":
+            self.agents.append(agent)
 
 
 @dataclass
@@ -367,3 +392,127 @@ async def test_jwt_and_image_bytes_never_reach_model_or_traces(caplog: pytest.Lo
     traced = repr([(span.name, dict(span.attributes or {})) for span in spans]) + repr(model.calls) + caplog.text
     assert "runtime-jwt" not in traced
     assert "secret-image-bytes" not in traced
+
+
+def test_support_agent_is_a_handoff_not_a_tool() -> None:
+    assert farmer_agent.handoffs == [support_agent]
+    assert support_agent.name == "Customer Support Agent"
+    assert "get_devices_status" not in {tool.name for tool in farmer_agent.tools}
+    assert {tool.name for tool in support_agent.tools} == {"get_devices_status"}
+    assert support_agent.handoffs == [farmer_agent]
+
+
+async def test_device_problem_is_handed_off_to_support_which_checks_status() -> None:
+    agent, model, renile_client = make_agent(
+        [
+            tool_call(HANDOFF),
+            tool_call("get_devices_status", call_id="call-2"),
+            answer("تاريخ تجديد باقة الجهاز انتهى، ومحتاج تشحن الباقة."),
+        ]
+    )
+
+    result = await run(agent, "جهاز GreenHouse Control Unit مش شغال", history=[])
+
+    assert result.response == "تاريخ تجديد باقة الجهاز انتهى، ومحتاج تشحن الباقة."
+    assert renile_client.status_calls == 1
+    instructions = [call[0] for call in model.calls]
+    assert SUPPORT_MARKER not in instructions[0]
+    assert all(SUPPORT_MARKER in text for text in instructions[1:])
+    assert "Today's date:" in instructions[1]
+    assert [item.name for item in result.tool_outputs] == [HANDOFF, "get_devices_status"]
+    assert json.loads(result.tool_outputs[1].output) == DEVICES_STATUS
+    assert agent.memory.events == [
+        ("user", "جهاز GreenHouse Control Unit مش شغال"),
+        ("assistant", "تاريخ تجديد باقة الجهاز انتهى، ومحتاج تشحن الباقة."),
+    ]
+
+
+async def test_support_asks_for_device_before_checking_status() -> None:
+    agent, model, renile_client = make_agent([tool_call(HANDOFF), answer("ممكن تقولي اسم الجهاز أو رقمه؟")])
+
+    result = await run(agent, "الجهاز مش شغال", history=[])
+
+    assert result.response == "ممكن تقولي اسم الجهاز أو رقمه؟"
+    assert renile_client.status_calls == 0
+    assert SUPPORT_MARKER in model.calls[-1][0]
+
+
+async def test_support_follow_up_starts_at_support_agent_without_handoff() -> None:
+    history = [
+        {"role": "user", "content": "جهاز GreenHouse Control Unit مش شغال"},
+        {"role": "assistant", "content": "هل الجهاز واصله كهربا كويس، واللمبة بتاعته منورة؟", "agent": SUPPORT_AGENT},
+    ]
+    agent, model, renile_client = make_agent([answer("فريق الدعم الفني هيتواصل معاك في أقرب وقت.")])
+
+    result = await run(agent, "أيوه", history=history)
+
+    assert result.response == "فريق الدعم الفني هيتواصل معاك في أقرب وقت."
+    assert len(model.calls) == 1
+    assert SUPPORT_MARKER in model.calls[0][0]
+    # The agent tag stays in Redis: the model sees only role and content.
+    assert model.calls[0][1][:2] == [{"role": item["role"], "content": item["content"]} for item in history]
+    assert result.tool_outputs == []
+    assert renile_client.status_calls == 0
+    assert agent.memory.agents == [SUPPORT_AGENT]
+
+
+async def test_support_hands_unrelated_message_back_to_farmer() -> None:
+    history = [
+        {"role": "user", "content": "الجهاز 7 مش شغال"},
+        {"role": "assistant", "content": "فريق الدعم الفني هيتواصل معاك في أقرب وقت.", "agent": SUPPORT_AGENT},
+    ]
+    agent, model, renile_client = make_agent(
+        [tool_call(HANDBACK), tool_call("get_current_readings", call_id="call-2"), answer("مفيش بيانات متاحة حالياً.")]
+    )
+
+    result = await run(agent, "إيه آخر القراءات؟", history=history)
+
+    assert result.response == "مفيش بيانات متاحة حالياً."
+    assert SUPPORT_MARKER in model.calls[0][0]
+    assert all(SUPPORT_MARKER not in call[0] for call in model.calls[1:])
+    assert renile_client.current_calls == 1
+    assert agent.memory.agents == [FARMER_AGENT]
+
+
+async def test_untagged_history_starts_at_farmer_and_records_support_after_handoff() -> None:
+    history = [
+        {"role": "user", "content": "جهاز GreenHouse Control Unit مش شغال"},
+        {"role": "assistant", "content": "هل الجهاز واصله كهربا كويس، واللمبة بتاعته منورة؟"},
+    ]
+    agent, model, _ = make_agent([tool_call(HANDOFF), answer("فريق الدعم الفني هيتواصل معاك في أقرب وقت.")])
+
+    result = await run(agent, "أيوه", history=history)
+
+    assert result.response == "فريق الدعم الفني هيتواصل معاك في أقرب وقت."
+    assert SUPPORT_MARKER not in model.calls[0][0]
+    assert SUPPORT_MARKER in model.calls[-1][0]
+    assert model.calls[-1][1][:2] == history
+    assert agent.memory.agents == [SUPPORT_AGENT]
+
+
+async def test_readings_request_with_stale_data_stays_with_farmer_assistant() -> None:
+    stale = {"project_name": "Farm 1", "devices": [{"device_name": "Device 1", "readings": [{"age_seconds": 900000}]}]}
+
+    class StaleReNileClient(FakeReNileClient):
+        async def get_current_readings(self, jwt: str) -> dict:
+            return stale
+
+    agent, model, renile_client = make_agent(
+        [tool_call("get_current_readings"), answer("آخر تحديث قديم، وده ممكن يشير لمشكلة اتصال أو توقف الجهاز.")],
+        renile_client=StaleReNileClient(),
+    )
+
+    result = await run(agent, "إيه آخر القراءات؟", history=[])
+
+    assert [item.name for item in result.tool_outputs] == ["get_current_readings"]
+    assert renile_client.status_calls == 0
+    assert all(SUPPORT_MARKER not in call[0] for call in model.calls)
+
+
+async def test_jwt_never_reaches_model_or_logs_on_support_path(caplog: pytest.LogCaptureFixture) -> None:
+    caplog.set_level(logging.DEBUG)
+    agent, model, _ = make_agent([tool_call(HANDOFF), tool_call("get_devices_status", call_id="call-2"), answer("done")])
+
+    await run(agent, "الجهاز 7 مش شغال", history=[])
+
+    assert "runtime-jwt" not in repr(model.calls) + caplog.text

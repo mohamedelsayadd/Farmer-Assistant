@@ -58,6 +58,7 @@ class Settings(BaseSettings):
     langfuse_secret_key: str = Field(alias="LANGFUSE_SECRET_KEY")
     langfuse_public_key: str = Field(alias="LANGFUSE_PUBLIC_KEY")
     langfuse_base_url: str = Field(alias="LANGFUSE_BASE_URL")
+    langfuse_observe: bool = Field(alias="LANGFUSE_OBSERVE")
 
 
 @lru_cache

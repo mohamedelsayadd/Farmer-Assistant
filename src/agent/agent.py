@@ -5,7 +5,8 @@ from agents import Agent, ModelSettings, OpenAIChatCompletionsModel, RunContextW
 from openai import AsyncOpenAI
 
 from agent.prompts import SYSTEM_PROMPT
-from agent.tools import TOOLS, AgentContext
+from agent.support_prompts import SUPPORT_PROMPT
+from agent.tools import SUPPORT_TOOLS, TOOLS, AgentContext
 from core.config import get_settings
 from memory.redis_memory import MemoryMessage
 from models.schemas.chat import UploadedImage
@@ -39,17 +40,48 @@ def system_prompt() -> str:
     )
 
 
+def support_prompt() -> str:
+    # Today's date lets the agent tell whether a manual 4G renewal date has passed.
+    return f"{SUPPORT_PROMPT}\n\nToday's date: {date.today().isoformat()}."
+
+
 def instructions(ctx: RunContextWrapper[AgentContext], agent: Agent[AgentContext]) -> str:
     return system_prompt()
 
 
+def support_instructions(ctx: RunContextWrapper[AgentContext], agent: Agent[AgentContext]) -> str:
+    return support_prompt()
+
+
+support_agent = Agent[AgentContext](
+    name="Customer Support Agent",
+    instructions=support_instructions,
+    tools=SUPPORT_TOOLS,
+    model=model,
+    model_settings=model_settings,
+)
+
+# The farmer agent routes support problems to support_agent by handoff (not as a tool).
 farmer_agent = Agent[AgentContext](
     name="Farmer Assistant",
     instructions=instructions,
     tools=TOOLS,
+    handoffs=[support_agent],
     model=model,
     model_settings=model_settings,
 )
+# Support hands anything outside the support flow back to the farmer (assigned here: the handoffs are circular).
+support_agent.handoffs = [farmer_agent]
+
+AGENTS_BY_NAME = {agent.name: agent for agent in (farmer_agent, support_agent)}
+
+
+def starting_agent(history: list[MemoryMessage]) -> Agent[AgentContext]:
+    # Each request resumes at the agent that wrote the last reply, so a support follow-up stays with support.
+    for item in reversed(history):
+        if item["role"] == "assistant":
+            return AGENTS_BY_NAME.get(item.get("agent", ""), farmer_agent)
+    return farmer_agent
 
 
 def build_messages(

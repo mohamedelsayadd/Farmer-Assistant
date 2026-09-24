@@ -1,6 +1,6 @@
 import json
 import logging
-from typing import Literal, TypedDict
+from typing import Literal, NotRequired, TypedDict
 
 from redis.asyncio import Redis
 
@@ -12,6 +12,8 @@ logger = logging.getLogger(__name__)
 class MemoryMessage(TypedDict):
     role: Role
     content: str
+    # Name of the agent that wrote an assistant turn; the next request starts at that agent.
+    agent: NotRequired[str]
 
 
 class RedisMemory:
@@ -28,13 +30,19 @@ class RedisMemory:
             value = raw_message.decode("utf-8") if isinstance(raw_message, bytes) else raw_message
             message = json.loads(value)
             if self._is_memory_message(message):
-                messages.append({"role": message["role"], "content": message["content"]})
+                item: MemoryMessage = {"role": message["role"], "content": message["content"]}
+                if isinstance(message.get("agent"), str):
+                    item["agent"] = message["agent"]
+                messages.append(item)
         logger.debug("memory_load_completed conversation_id=%s messages=%s", conversation_id, len(messages))
         return messages
 
-    async def append(self, conversation_id: str, role: Role, content: str) -> None:
+    async def append(self, conversation_id: str, role: Role, content: str, agent: str | None = None) -> None:
         key = self._key(conversation_id)
-        payload = json.dumps({"role": role, "content": content}, ensure_ascii=False)
+        message: MemoryMessage = {"role": role, "content": content}
+        if agent is not None:
+            message["agent"] = agent
+        payload = json.dumps(message, ensure_ascii=False)
         logger.debug(
             "memory_append_started conversation_id=%s role=%s content_chars=%s",
             conversation_id,

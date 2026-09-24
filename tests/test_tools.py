@@ -5,20 +5,30 @@ import pytest
 from agents import FunctionTool
 from agents.tool_context import ToolContext
 
+from datetime import date
+
+import httpx
+
 from agent.tools import (
+    SUPPORT_TOOLS,
     TOOL_FAILED_MESSAGE,
     TOOLS,
     AgentContext,
     get_current_readings,
     get_devices_ids,
+    get_devices_status,
     get_last_duration_summary,
     get_specific_time_readings,
     plant_diseases_detection,
 )
-from conftest import FakeToolCache
+from conftest import FakeToolCache, build_settings
 from models.schemas.chat import UploadedImage
+from providers.renile_client import ReNileClient
 
-SCHEMAS = {tool.name: {"description": tool.description, "parameters": tool.params_json_schema} for tool in TOOLS}
+SCHEMAS = {
+    tool.name: {"description": tool.description, "parameters": tool.params_json_schema}
+    for tool in TOOLS + SUPPORT_TOOLS
+}
 
 
 def test_tool_schemas_do_not_expose_jwt_or_runtime() -> None:
@@ -31,7 +41,8 @@ def test_tool_schemas_do_not_expose_jwt_or_runtime() -> None:
 
 
 def test_exposed_tool_names() -> None:
-    assert set(SCHEMAS) == {
+    assert {tool.name for tool in SUPPORT_TOOLS} == {"get_devices_status"}
+    assert {tool.name for tool in TOOLS} == {
         "plant_diseases_detection",
         "get_current_readings",
         "get_devices_ids",
@@ -40,7 +51,9 @@ def test_exposed_tool_names() -> None:
     }
 
 
-@pytest.mark.parametrize("name", ["get_current_readings", "get_devices_ids", "plant_diseases_detection"])
+@pytest.mark.parametrize(
+    "name", ["get_current_readings", "get_devices_ids", "plant_diseases_detection", "get_devices_status"]
+)
 def test_argumentless_tools_have_no_agent_arguments(name: str) -> None:
     assert SCHEMAS[name]["parameters"]["properties"] == {}
 
@@ -79,6 +92,18 @@ BACKEND_CURRENT_READINGS = {
 
 BACKEND_DEVICES_IDS = [{"_id": "device-1", "name": "Device 1"}]
 
+BACKEND_DEVICES_STATUS = [
+    {
+        "_id": "device-1",
+        "name": "Device 1",
+        "last_reading_time": "2026-09-23T10:00:00+00:00",
+        "readings": {"Temperature": 28.5},
+        "connection_type": "4G",
+        "renewal_type": "manual",
+        "renewal_date": "2026-09-01",
+    }
+]
+
 
 class FakeReNileClient:
     async def get_current_readings(self, jwt: str) -> dict:
@@ -88,6 +113,10 @@ class FakeReNileClient:
     async def get_devices_ids(self, jwt: str) -> list[dict]:
         assert jwt == "runtime-jwt"
         return BACKEND_DEVICES_IDS
+
+    async def get_devices_status(self, jwt: str) -> list[dict]:
+        assert jwt == "runtime-jwt"
+        return BACKEND_DEVICES_STATUS
 
     async def get_last_duration_summary(self, jwt: str, device_id: str, start_time: str) -> dict:
         assert jwt == "runtime-jwt"
@@ -174,6 +203,38 @@ async def test_devices_ids_tool_returns_backend_response_unchanged() -> None:
     result = await invoke(get_devices_ids, _context())
 
     assert json.loads(result) == BACKEND_DEVICES_IDS
+
+
+async def test_devices_status_tool_returns_client_result_uncached(caplog: pytest.LogCaptureFixture) -> None:
+    caplog.set_level(logging.INFO)
+    tool_cache = FakeToolCache()
+
+    result = await invoke(get_devices_status, _context(tool_cache))
+
+    assert json.loads(result) == BACKEND_DEVICES_STATUS
+    assert tool_cache.stored_results == []
+    assert "runtime-jwt" not in caplog.text
+
+
+async def test_renile_devices_status_is_dummy_data_covering_every_support_branch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def no_http(*args: object, **kwargs: object) -> None:
+        raise AssertionError("dummy device status must not call the ReNile API")
+
+    monkeypatch.setattr(httpx, "AsyncClient", no_http)
+
+    devices = await ReNileClient(build_settings()).get_devices_status("runtime-jwt")
+
+    today = date.today().isoformat()
+    branches = {(d["connection_type"], d["renewal_type"]) for d in devices}
+    assert branches == {("WIFI", None), ("4G", "automatic"), ("4G", "manual")}
+    manual_dates = [d["renewal_date"] for d in devices if d["renewal_type"] == "manual"]
+    assert any(renewal < today for renewal in manual_dates)
+    assert any(renewal >= today for renewal in manual_dates)
+    assert all(d["renewal_date"] is None for d in devices if d["renewal_type"] != "manual")
+    for device in devices:
+        assert {"_id", "name", "last_reading_time", "readings", "connection_type"} <= device.keys()
 
 
 async def test_last_duration_summary_tool_returns_processed_api_response() -> None:
