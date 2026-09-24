@@ -1,3 +1,4 @@
+import json
 from datetime import date
 from typing import Any
 
@@ -49,8 +50,19 @@ def instructions(ctx: RunContextWrapper[AgentContext], agent: Agent[AgentContext
     return system_prompt()
 
 
-def support_instructions(ctx: RunContextWrapper[AgentContext], agent: Agent[AgentContext]) -> str:
-    return support_prompt()
+async def support_instructions(ctx: RunContextWrapper[AgentContext], agent: Agent[AgentContext]) -> str:
+    # Tool results are not kept in chat memory, so re-show the last device status from the
+    # tool cache: later support turns continue the flow from it instead of guessing.
+    context = ctx.context
+    status = await context.tool_cache.get(
+        conversation_id=context.conversation_id, tool_name="get_devices_status", arguments={}
+    )
+    if status is None:
+        return support_prompt()
+    return (
+        f"{support_prompt()}\n\n# Device status already checked in this conversation\n\n"
+        f"{json.dumps(status, ensure_ascii=False)}"
+    )
 
 
 support_agent = Agent[AgentContext](

@@ -456,6 +456,32 @@ async def test_support_follow_up_starts_at_support_agent_without_handoff() -> No
     assert agent.memory.agents == [SUPPORT_AGENT]
 
 
+async def test_support_follow_up_sees_previous_device_status_without_calling_tool() -> None:
+    history = [
+        {"role": "user", "content": "جهاز GreenHouse Control Unit مش شغال"},
+        {"role": "assistant", "content": "متأكد إن الواي فاي في الموقع شغال؟", "agent": SUPPORT_AGENT},
+    ]
+    cache = FakeToolCache({("get_devices_status", "{}"): DEVICES_STATUS})
+    agent, model, renile_client = make_agent(
+        [answer("هل الجهاز واصله كهربا كويس، واللمبة بتاعته منورة؟")], tool_cache=cache
+    )
+
+    await run(agent, "أيوه", history=history)
+
+    instructions = model.calls[0][0]
+    assert "# Device status already checked in this conversation" in instructions
+    assert json.dumps(DEVICES_STATUS, ensure_ascii=False) in instructions
+    assert renile_client.status_calls == 0
+
+
+async def test_support_instructions_have_no_status_section_before_status_check() -> None:
+    agent, model, _ = make_agent([tool_call(HANDOFF), answer("ممكن تقولي اسم الجهاز أو رقمه؟")])
+
+    await run(agent, "الجهاز مش شغال", history=[])
+
+    assert "# Device status already checked" not in model.calls[-1][0]
+
+
 async def test_support_hands_unrelated_message_back_to_farmer() -> None:
     history = [
         {"role": "user", "content": "الجهاز 7 مش شغال"},

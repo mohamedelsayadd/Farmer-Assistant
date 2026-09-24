@@ -118,6 +118,8 @@ def test_support_prompt_identifies_device_before_status_check() -> None:
     assert "Today's date:" in prompt
     assert "If the user mentioned the device name or ID, immediately call get_devices_status" in prompt
     assert "Do not call get_devices_status until the device is identified" in prompt
+    assert "If a device status already checked in this conversation is shown at the end of this prompt" in prompt
+    assert "do not call get_devices_status again" in prompt
     assert "ممكن تقولي اسم الجهاز أو رقمه؟" in prompt
     assert "Never guess." in prompt
 

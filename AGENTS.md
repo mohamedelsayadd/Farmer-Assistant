@@ -60,7 +60,7 @@
 
 ## Memory And Cache
 - Two Redis databases, deliberately separate. DB 0 stores only `user` and `assistant` messages in `conversation:{conversation_id}` (assistant messages also carry the answering agent's name); defaults are TTL `3600` seconds and max `12` messages.
-- Redis DB 1 stores processed tool results as `tool_cache:{conversation_id}:{tool_name}:{arguments_hash}`, the value being the result JSON itself; default TTL in `.env.example` is `600` seconds. The value format changed from the old `{tool_name, arguments, content}` wrapper, so flush DB 1 (`redis-cli -n 1 FLUSHDB`) when deploying that change.
+- Redis DB 1 stores processed tool results as `tool_cache:{conversation_id}:{tool_name}:{arguments_hash}`, the value being the result JSON itself; default TTL in `.env.example` is `600` seconds. `get_devices_status` is never read from the cache (always fresh) but writes its result there under arguments `{}`; the async `support_instructions` in `agent/agent.py` appends it to the support prompt so follow-up support turns keep the device's status without calling the tool again. The value format changed from the old `{tool_name, arguments, content}` wrapper, so flush DB 1 (`redis-cli -n 1 FLUSHDB`) when deploying that change.
 - Tool results are never written into prompt memory — the model only sees them within the round that fetched them. Tool execution checks the Redis tool cache before calling ReNile.
 
 ## Prompt Rules To Preserve

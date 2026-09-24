@@ -123,9 +123,13 @@ async def get_devices_status(ctx: Context) -> str:
     """Get the status of each of the user's devices, for troubleshooting a device problem the user reported.
     Returns per device: _id, name, last_reading_time, readings (sensor values), connection_type (WIFI or 4G),
     renewal_type (automatic or manual, 4G only), and renewal_date (manual 4G renewal only)."""
-    # Not cached: troubleshooting needs the freshest status.
+    # Always fetched fresh, then saved so later support turns see it in the support instructions.
     context = ctx.context
-    return _dump("get_devices_status", await context.renile_client.get_devices_status(context.jwt))
+    result = await context.renile_client.get_devices_status(context.jwt)
+    await context.tool_cache.set(
+        conversation_id=context.conversation_id, tool_name="get_devices_status", arguments={}, result=result
+    )
+    return _dump("get_devices_status", result)
 
 
 TOOLS = [

@@ -205,14 +205,16 @@ async def test_devices_ids_tool_returns_backend_response_unchanged() -> None:
     assert json.loads(result) == BACKEND_DEVICES_IDS
 
 
-async def test_devices_status_tool_returns_client_result_uncached(caplog: pytest.LogCaptureFixture) -> None:
+async def test_devices_status_tool_fetches_fresh_and_saves_result(caplog: pytest.LogCaptureFixture) -> None:
     caplog.set_level(logging.INFO)
-    tool_cache = FakeToolCache()
+    tool_cache = FakeToolCache({("get_devices_status", "{}"): [{"_id": "stale"}]})
 
     result = await invoke(get_devices_status, _context(tool_cache))
 
     assert json.loads(result) == BACKEND_DEVICES_STATUS
-    assert tool_cache.stored_results == []
+    assert [(tool, arguments, stored) for _, tool, arguments, stored in tool_cache.stored_results] == [
+        ("get_devices_status", {}, BACKEND_DEVICES_STATUS)
+    ]
     assert "runtime-jwt" not in caplog.text
 
 
