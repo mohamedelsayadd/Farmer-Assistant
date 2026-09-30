@@ -400,6 +400,7 @@ def test_support_agent_is_a_handoff_not_a_tool() -> None:
     assert "get_devices_status" not in {tool.name for tool in farmer_agent.tools}
     assert {tool.name for tool in support_agent.tools} == {"get_devices_status"}
     assert support_agent.handoffs == [farmer_agent]
+    assert "problem the user reports with their devices" in support_agent.handoff_description
 
 
 async def test_device_problem_is_handed_off_to_support_which_checks_status() -> None:

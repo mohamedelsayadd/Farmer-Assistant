@@ -85,15 +85,22 @@ def test_system_prompt_uses_story_style_for_day_level_historical_answers() -> No
     assert "Never invent events or causes" in prompt
 
 
-def test_system_prompt_hands_off_only_explicit_support_problems() -> None:
+def test_system_prompt_hands_off_reported_support_problems() -> None:
     prompt = system_prompt()
 
     assert "# Customer Support Handoff" in prompt
-    assert "The user explicitly reports or complains about a problem with a device" in prompt
+    assert "The user's message reports a problem, however vague" in prompt
+    assert "Judge the meaning of the message, not keywords" in prompt
+    assert '"عندي مشكلة في جهازي"' in prompt
+    assert "Asking for readings is not a problem report; reporting a problem with readings is." in prompt
+    assert '"هاتلي قراءات الجهاز"' in prompt
     assert "A support conversation already started in the conversation history" in prompt
     assert "answers the support agent's last question" in prompt
-    assert "Never start a support transfer because a tool result looks stale, missing, abnormal, or suspicious" in prompt
+    assert "A tool result alone never starts a support transfer" in prompt
     assert "Requests for current or past readings always stay with you" in prompt
+    assert "when the user says their readings are missing, wrong, or strange, that is a problem report" in prompt
+    assert "## 0. Support problems first" in prompt
+    assert prompt.index("## 0. Support problems first") < prompt.index("## 1. No tools")
 
 
 def test_farmer_and_support_prompts_are_separate() -> None:

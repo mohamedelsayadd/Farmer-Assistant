@@ -67,6 +67,11 @@ async def support_instructions(ctx: RunContextWrapper[AgentContext], agent: Agen
 
 support_agent = Agent[AgentContext](
     name="Customer Support Agent",
+    handoff_description=(
+        "Troubleshoots any problem the user reports with their devices, sensors, readings (missing, wrong, "
+        "strange), WiFi/4G connectivity, data package, or account, even vague ones like "
+        "'I have a problem with my device'. Not for requests to view readings."
+    ),
     instructions=support_instructions,
     tools=SUPPORT_TOOLS,
     model=model,
