@@ -121,8 +121,9 @@ async def get_specific_time_readings(ctx: Context, device_id: str, start_time: s
 @function_tool(failure_error_function=tool_failed)
 async def get_devices_status(ctx: Context) -> str:
     """Get the status of each of the user's devices, for troubleshooting a device problem the user reported.
-    Returns per device: _id, name, last_reading_time, readings (sensor values), connection_type (WIFI or 4G),
-    renewal_type (automatic or manual, 4G only), and renewal_date (manual 4G renewal only)."""
+    Returns "devices", each with: id, name, connectivityType (WIFI or 4G), connectivityRenewType
+    (automatic or manual, 4G only), expiration_date (manual 4G renewal only), and readings per sensor
+    (value, unit, last_read_at, normal_range)."""
     # Always fetched fresh, then saved so later support turns see it in the support instructions.
     context = ctx.context
     result = await context.renile_client.get_devices_status(context.jwt)

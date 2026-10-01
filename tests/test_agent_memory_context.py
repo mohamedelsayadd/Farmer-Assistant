@@ -148,8 +148,8 @@ def test_support_prompt_orders_connection_checks_before_power() -> None:
     assert positions == sorted(positions)
     assert "same username and password that the device was previously connected to" in prompt
     assert "Do not ask about power before this question is answered" in prompt
-    assert 'renewal_type "automatic": skip the renewal-date check and continue to Step 5' in prompt
-    assert "If the renewal date has passed, reply with the Recharge Reply. STOP the flow." in prompt
+    assert 'connectivityRenewType "automatic": skip the renewal-date check and continue to Step 5' in prompt
+    assert "If the expiration date has passed, reply with the Recharge Reply. STOP the flow." in prompt
     assert "Is the device receiving power properly, and is the indicator light on?" in prompt
     assert "Only if the user confirms BOTH" in prompt
 

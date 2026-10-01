@@ -1,11 +1,12 @@
 import logging
-from datetime import date, datetime, timedelta, timezone
+from copy import deepcopy
 from time import perf_counter
 from typing import Any
 
 import httpx
 
 from core.config import Settings
+from providers.renile_mock_data import DEVICES_STATUS_RESPONSE
 
 logger = logging.getLogger(__name__)
 
@@ -32,50 +33,10 @@ class ReNileClient:
         logger.info("renile_devices_ids_completed")
         return response
 
-    async def get_devices_status(self, jwt: str) -> list[dict[str, Any]]:
-        # Placeholder until the ReNile device-status API is ready: dummy data, no HTTP call.
-        # Covers every support-flow branch: WIFI, 4G automatic, 4G manual expired and valid.
-        logger.info("renile_devices_status_started source=dummy")
-        now = datetime.now(timezone.utc)
-        today = date.today()
-        return [
-            {
-                "_id": "status-device-1",
-                "name": "Greenhouse 1",
-                "last_reading_time": (now - timedelta(minutes=5)).isoformat(timespec="seconds"),
-                "readings": {"Temperature": 28.5, "Humidity": 61, "Soil_moisture": 42},
-                "connection_type": "WIFI",
-                "renewal_type": None,
-                "renewal_date": None,
-            },
-            {
-                "_id": "status-device-2",
-                "name": "Field Station",
-                "last_reading_time": (now - timedelta(days=3)).isoformat(timespec="seconds"),
-                "readings": {"Temperature": None, "Humidity": 0, "Soil_moisture": None},
-                "connection_type": "4G",
-                "renewal_type": "automatic",
-                "renewal_date": None,
-            },
-            {
-                "_id": "status-device-3",
-                "name": "Orchard Sensor",
-                "last_reading_time": (now - timedelta(days=12)).isoformat(timespec="seconds"),
-                "readings": {"Temperature": 30.1, "Humidity": 55},
-                "connection_type": "4G",
-                "renewal_type": "manual",
-                "renewal_date": (today - timedelta(days=10)).isoformat(),
-            },
-            {
-                "_id": "status-device-4",
-                "name": "Nursery Unit",
-                "last_reading_time": (now - timedelta(days=2)).isoformat(timespec="seconds"),
-                "readings": {"Temperature": 26.4, "Humidity": 70},
-                "connection_type": "4G",
-                "renewal_type": "manual",
-                "renewal_date": (today + timedelta(days=20)).isoformat(),
-            },
-        ]
+    async def get_devices_status(self, jwt: str) -> dict[str, Any]:
+        # Placeholder until the ReNile device-status API is ready: mock response, no HTTP call.
+        logger.info("renile_devices_status_started source=mock")
+        return deepcopy(DEVICES_STATUS_RESPONSE)
 
     async def get_last_duration_summary(self, jwt: str, device_id: str, start_time: str) -> dict[str, Any]:
         logger.info(

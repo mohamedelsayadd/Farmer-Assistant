@@ -5,8 +5,6 @@ import pytest
 from agents import FunctionTool
 from agents.tool_context import ToolContext
 
-from datetime import date
-
 import httpx
 
 from agent.tools import (
@@ -92,17 +90,25 @@ BACKEND_CURRENT_READINGS = {
 
 BACKEND_DEVICES_IDS = [{"_id": "device-1", "name": "Device 1"}]
 
-BACKEND_DEVICES_STATUS = [
-    {
-        "_id": "device-1",
-        "name": "Device 1",
-        "last_reading_time": "2026-09-23T10:00:00+00:00",
-        "readings": {"Temperature": 28.5},
-        "connection_type": "4G",
-        "renewal_type": "manual",
-        "renewal_date": "2026-09-01",
-    }
-]
+BACKEND_DEVICES_STATUS = {
+    "devices": [
+        {
+            "id": "device-1",
+            "name": "Device 1",
+            "connectivityType": "4G",
+            "connectivityRenewType": "manual",
+            "expiration_date": "2026-09-01",
+            "readings": {
+                "temperature": {
+                    "value": 28.5,
+                    "unit": "°C",
+                    "last_read_at": "2026-09-23T10:00:00+03:00",
+                    "normal_range": {"min": 15, "max": 35},
+                }
+            },
+        }
+    ]
+}
 
 
 class FakeReNileClient:
@@ -114,7 +120,7 @@ class FakeReNileClient:
         assert jwt == "runtime-jwt"
         return BACKEND_DEVICES_IDS
 
-    async def get_devices_status(self, jwt: str) -> list[dict]:
+    async def get_devices_status(self, jwt: str) -> dict:
         assert jwt == "runtime-jwt"
         return BACKEND_DEVICES_STATUS
 
@@ -207,7 +213,7 @@ async def test_devices_ids_tool_returns_backend_response_unchanged() -> None:
 
 async def test_devices_status_tool_fetches_fresh_and_saves_result(caplog: pytest.LogCaptureFixture) -> None:
     caplog.set_level(logging.INFO)
-    tool_cache = FakeToolCache({("get_devices_status", "{}"): [{"_id": "stale"}]})
+    tool_cache = FakeToolCache({("get_devices_status", "{}"): {"devices": [{"id": "stale"}]}})
 
     result = await invoke(get_devices_status, _context(tool_cache))
 
@@ -218,25 +224,29 @@ async def test_devices_status_tool_fetches_fresh_and_saves_result(caplog: pytest
     assert "runtime-jwt" not in caplog.text
 
 
-async def test_renile_devices_status_is_dummy_data_covering_every_support_branch(
+async def test_renile_devices_status_is_mock_data_covering_every_support_branch(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     def no_http(*args: object, **kwargs: object) -> None:
-        raise AssertionError("dummy device status must not call the ReNile API")
+        raise AssertionError("mock device status must not call the ReNile API")
 
     monkeypatch.setattr(httpx, "AsyncClient", no_http)
 
-    devices = await ReNileClient(build_settings()).get_devices_status("runtime-jwt")
+    client = ReNileClient(build_settings())
+    response = await client.get_devices_status("runtime-jwt")
+    devices = response["devices"]
 
-    today = date.today().isoformat()
-    branches = {(d["connection_type"], d["renewal_type"]) for d in devices}
+    branches = {(d["connectivityType"], d["connectivityRenewType"]) for d in devices}
     assert branches == {("WIFI", None), ("4G", "automatic"), ("4G", "manual")}
-    manual_dates = [d["renewal_date"] for d in devices if d["renewal_type"] == "manual"]
-    assert any(renewal < today for renewal in manual_dates)
-    assert any(renewal >= today for renewal in manual_dates)
-    assert all(d["renewal_date"] is None for d in devices if d["renewal_type"] != "manual")
+    assert all(d["expiration_date"] for d in devices if d["connectivityRenewType"] == "manual")
+    assert all(d["expiration_date"] is None for d in devices if d["connectivityRenewType"] != "manual")
     for device in devices:
-        assert {"_id", "name", "last_reading_time", "readings", "connection_type"} <= device.keys()
+        assert {"id", "name", "connectivityType", "connectivityRenewType", "expiration_date", "readings"} <= device.keys()
+        for reading in device["readings"].values():
+            assert {"value", "unit", "last_read_at", "normal_range"} <= reading.keys()
+    # Callers get a copy: mutating one response never leaks into the next.
+    devices.clear()
+    assert (await client.get_devices_status("runtime-jwt"))["devices"]
 
 
 async def test_last_duration_summary_tool_returns_processed_api_response() -> None:

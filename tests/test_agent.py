@@ -22,17 +22,25 @@ from services.chat_service import ChatService
 DEVICES = [{"_id": f"device-{index}", "name": f"Device {index}"} for index in range(1, 7)] + [
     {"_id": "device-7", "name": "GreenHouse Control Unit"}
 ]
-DEVICES_STATUS = [
-    {
-        "_id": "device-7",
-        "name": "GreenHouse Control Unit",
-        "last_reading_time": "2026-09-01T10:00:00+00:00",
-        "readings": {"Temperature": 30.1},
-        "connection_type": "4G",
-        "renewal_type": "manual",
-        "renewal_date": "2026-09-01",
-    }
-]
+DEVICES_STATUS = {
+    "devices": [
+        {
+            "id": "device-7",
+            "name": "GreenHouse Control Unit",
+            "connectivityType": "4G",
+            "connectivityRenewType": "manual",
+            "expiration_date": "2026-09-01",
+            "readings": {
+                "temperature": {
+                    "value": 30.1,
+                    "unit": "°C",
+                    "last_read_at": "2026-09-01T10:00:00+03:00",
+                    "normal_range": {"min": 15, "max": 35},
+                }
+            },
+        }
+    ]
+}
 HANDOFF = "transfer_to_customer_support_agent"
 HANDBACK = "transfer_to_farmer_assistant"
 SUPPORT_AGENT = "Customer Support Agent"
@@ -104,7 +112,7 @@ class FakeReNileClient:
             raise httpx.ConnectError("renile down")
         return {"project_name": "Farm 1", "devices": []}
 
-    async def get_devices_status(self, jwt: str) -> list[dict]:
+    async def get_devices_status(self, jwt: str) -> dict:
         assert jwt == "runtime-jwt"
         self.status_calls += 1
         return DEVICES_STATUS
