@@ -1,12 +1,10 @@
 import logging
-from copy import deepcopy
 from time import perf_counter
 from typing import Any
 
 import httpx
 
 from core.config import Settings
-from providers.renile_mock_data import DEVICES_STATUS_RESPONSE
 
 logger = logging.getLogger(__name__)
 
@@ -17,6 +15,7 @@ class ReNileClient:
         self._devices_path = settings.renile_devices_path
         self._current_path = settings.renile_current_readings_path
         self._historical_path = settings.renile_historical_readings_path
+        self._devices_summary_path = settings.renile_devices_summary_path
         self._timeout = settings.http_timeout_seconds
 
     async def get_current_readings(self, jwt: str) -> dict[str, Any]:
@@ -34,9 +33,13 @@ class ReNileClient:
         return response
 
     async def get_devices_status(self, jwt: str) -> dict[str, Any]:
-        # Placeholder until the ReNile device-status API is ready: mock response, no HTTP call.
-        logger.info("renile_devices_status_started source=mock")
-        return deepcopy(DEVICES_STATUS_RESPONSE)
+        logger.info("renile_devices_status_started path=%s", self._devices_summary_path)
+        response = await self._get(self._devices_summary_path, jwt, {})
+        if not isinstance(response, dict) or not isinstance(response.get("devices"), list):
+            logger.error("renile_devices_status_invalid_shape response_type=%s", type(response).__name__)
+            raise ValueError("Unexpected devices status response shape")
+        logger.info("renile_devices_status_completed devices=%s", len(response["devices"]))
+        return response
 
     async def get_last_duration_summary(self, jwt: str, device_id: str, start_time: str) -> dict[str, Any]:
         logger.info(

@@ -41,6 +41,7 @@ class Settings(BaseSettings):
     renile_devices_path: str = Field(alias="RENILE_DEVICES_PATH")
     renile_current_readings_path: str = Field(alias="RENILE_CURRENT_READINGS_PATH")
     renile_historical_readings_path: str = Field(alias="RENILE_HISTORICAL_READINGS_PATH")
+    renile_devices_summary_path: str = Field(alias="RENILE_DEVICES_SUMMARY_PATH")
 
     plant_disease_api_base_url: str = Field(alias="PLANT_DISEASE_API_BASE_URL")
     plant_disease_predict_path: str = Field(alias="PLANT_DISEASE_PREDICT_PATH")

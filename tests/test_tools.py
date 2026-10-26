@@ -224,29 +224,37 @@ async def test_devices_status_tool_fetches_fresh_and_saves_result(caplog: pytest
     assert "runtime-jwt" not in caplog.text
 
 
-async def test_renile_devices_status_is_mock_data_covering_every_support_branch(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    def no_http(*args: object, **kwargs: object) -> None:
-        raise AssertionError("mock device status must not call the ReNile API")
+def _renile_client_answering(monkeypatch: pytest.MonkeyPatch, body: object) -> list[httpx.Request]:
+    requests: list[httpx.Request] = []
+    real_client = httpx.AsyncClient
 
-    monkeypatch.setattr(httpx, "AsyncClient", no_http)
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200, json=body)
 
-    client = ReNileClient(build_settings())
-    response = await client.get_devices_status("runtime-jwt")
-    devices = response["devices"]
+    monkeypatch.setattr(
+        httpx, "AsyncClient", lambda **kwargs: real_client(transport=httpx.MockTransport(handler), **kwargs)
+    )
+    return requests
 
-    branches = {(d["connectivityType"], d["connectivityRenewType"]) for d in devices}
-    assert branches == {("WIFI", None), ("4G", "automatic"), ("4G", "manual")}
-    assert all(d["expiration_date"] for d in devices if d["connectivityRenewType"] == "manual")
-    assert all(d["expiration_date"] is None for d in devices if d["connectivityRenewType"] != "manual")
-    for device in devices:
-        assert {"id", "name", "connectivityType", "connectivityRenewType", "expiration_date", "readings"} <= device.keys()
-        for reading in device["readings"].values():
-            assert {"value", "unit", "last_read_at", "normal_range"} <= reading.keys()
-    # Callers get a copy: mutating one response never leaks into the next.
-    devices.clear()
-    assert (await client.get_devices_status("runtime-jwt"))["devices"]
+
+async def test_renile_devices_status_calls_devices_summary_api(monkeypatch: pytest.MonkeyPatch) -> None:
+    requests = _renile_client_answering(monkeypatch, BACKEND_DEVICES_STATUS)
+
+    response = await ReNileClient(build_settings()).get_devices_status("runtime-jwt")
+
+    assert response == BACKEND_DEVICES_STATUS
+    assert [(r.method, r.url.path, r.headers["Authorization"]) for r in requests] == [
+        ("GET", "/api/v1/devices/summary", "JWT runtime-jwt")
+    ]
+
+
+@pytest.mark.parametrize("body", [[], {"devices": None}, {"detail": "error"}])
+async def test_renile_devices_status_rejects_unexpected_shape(monkeypatch: pytest.MonkeyPatch, body: object) -> None:
+    _renile_client_answering(monkeypatch, body)
+
+    with pytest.raises(ValueError):
+        await ReNileClient(build_settings()).get_devices_status("runtime-jwt")
 
 
 async def test_last_duration_summary_tool_returns_processed_api_response() -> None:
