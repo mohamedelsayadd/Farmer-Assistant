@@ -1,6 +1,6 @@
 from agent.agent import build_messages, support_prompt, system_prompt
 from agent.prompts import SYSTEM_PROMPT
-from agent.support_prompts import SUPPORT_PROMPT
+from agent.support_prompts import FLOW_END_REPLIES, SUPPORT_PROMPT
 
 
 def test_build_messages_keeps_history_as_plain_turns_without_system_or_tool_context() -> None:
@@ -114,8 +114,8 @@ def test_support_prompt_hands_non_support_messages_back_to_farmer() -> None:
     prompt = support_prompt()
 
     assert "# Leaving Support" in prompt
-    assert "Transfer back to the Farmer Assistant, without answering yourself" in prompt
-    assert "after the flow already ended with the Final Support Reply or the Recharge Reply" in prompt
+    assert "call transfer_to_farmer_assistant immediately and write nothing yourself" in prompt
+    assert "Never reply that you only handle device problems." in prompt
     assert "Short answers to your last support question" in prompt
     assert "never transfer those back" in prompt
 
@@ -124,7 +124,8 @@ def test_support_prompt_identifies_device_before_status_check() -> None:
     prompt = support_prompt()
 
     assert "Today's date:" in prompt
-    assert "If the user mentioned the device name or ID, immediately call get_devices_status" in prompt
+    assert "Look for the device name or ID anywhere in the conversation, including the message that started this transfer" in prompt
+    assert "do not ask for it again" in prompt
     assert "Do not call get_devices_status until the device is identified" in prompt
     assert "If a device status already checked in this conversation is shown at the end of this prompt" in prompt
     assert "do not call get_devices_status again" in prompt
@@ -155,19 +156,30 @@ def test_support_prompt_orders_connection_checks_before_power() -> None:
     assert "Only if the user confirms BOTH" in prompt
 
 
-def test_support_prompt_strict_rules() -> None:
+def test_support_prompt_handles_account_problems_before_device_identification() -> None:
     prompt = support_prompt()
 
-    for rule in [
-        "Follow the steps in exactly this order.",
-        "Never perform the power check before the WIFI/4G checks required above.",
-        "Never perform WIFI checks for a 4G device.",
-        "Never perform renewal checks for WIFI devices.",
-        "Never ask about WIFI or power for a confirmed sensor-only problem.",
-        "tool results alone must never start a support flow",
-        "continue it across turns using the conversation history and the previous support question",
-    ]:
-        assert rule in prompt
+    assert "# Account problems" in prompt
+    assert "Do not call any tool and do not ask for a device." in prompt
+    assert prompt.index("# Account problems") < prompt.index("# Step 1.")
+
+
+def test_support_prompt_repeats_the_pending_question_on_off_topic_answers() -> None:
+    prompt = support_prompt()
+
+    assert "If the current message does not answer your pending question" in prompt
+    assert "repeat that same question" in prompt
+    assert "never give the Final Support Reply early" in prompt
+
+
+def test_support_prompt_asks_connectivity_when_unknown_and_handles_missing_4g_fields() -> None:
+    prompt = support_prompt()
+
+    assert 'connectivityType null or missing' in prompt
+    assert "الجهاز متوصل بالواي فاي ولا بشريحة 4G؟" in prompt
+    assert "Is the device connected over WiFi or a 4G SIM?" in prompt
+    assert "If connectivityRenewType or expiration_date is missing, continue to Step 5." in prompt
+    assert "renewal fields apply only to 4G" in prompt
 
 
 def test_support_prompt_has_fixed_replies_in_both_languages() -> None:
@@ -178,3 +190,5 @@ def test_support_prompt_has_fixed_replies_in_both_languages() -> None:
     assert "تاريخ تجديد باقة الجهاز انتهى، ومحتاج تشحن الباقة." in prompt
     assert "The renewal date has expired. You need to recharge the package." in prompt
     assert "Decide the reply language only from the text the user actually typed" in prompt
+    for reply in FLOW_END_REPLIES:
+        assert reply in SUPPORT_PROMPT
