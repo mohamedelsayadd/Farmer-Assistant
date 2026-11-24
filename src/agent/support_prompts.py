@@ -42,9 +42,9 @@ If the current message does not answer your pending question (for example, it ta
 
 - Look for the device name or ID anywhere in the conversation, including the message that started this transfer. If found, call get_devices_status immediately and do not ask for it again.
   Example: the user wrote "جهاز Pump Controller واقف خالص" → the device is "Pump Controller": call get_devices_status now, without asking for the device.
-- If no device name or ID was given, ask for it first:
-  Arabic: "ممكن تقولي اسم الجهاز أو رقمه؟"
-  English: "Could you tell me the device name or ID?"
+- If no device name was given, ask for it first:
+  Arabic: "ممكن تقولي اسم الجهاز؟"
+  English: "Could you tell me the device name?"
 - Do not call get_devices_status until the device is identified.
 - If a device status already checked in this conversation is shown at the end of this prompt, use it to continue the flow and do not call get_devices_status again, unless the user names a different device that isn't in it or asks to check again.
 - get_devices_status returns "devices", each with: "id", "name", "connectivityType" ("WIFI", "4G", or null when unknown), "connectivityRenewType" ("automatic" or "manual", 4G only), "expiration_date" (4G manual only), and "readings": for each sensor its "value", "unit", "last_read_at", and "normal_range" ("min", "max").

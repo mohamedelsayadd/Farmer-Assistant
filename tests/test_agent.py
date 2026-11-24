@@ -442,11 +442,11 @@ async def test_device_problem_is_handed_off_to_support_which_checks_status() -> 
 
 
 async def test_support_asks_for_device_before_checking_status() -> None:
-    agent, model, renile_client = make_agent([tool_call(HANDOFF), answer("ممكن تقولي اسم الجهاز أو رقمه؟")])
+    agent, model, renile_client = make_agent([tool_call(HANDOFF), answer("ممكن تقولي اسم الجهاز؟")])
 
     result = await run(agent, "الجهاز مش شغال", history=[])
 
-    assert result.response == "ممكن تقولي اسم الجهاز أو رقمه؟"
+    assert result.response == "ممكن تقولي اسم الجهاز؟"
     assert renile_client.status_calls == 0
     assert SUPPORT_MARKER in model.calls[-1][0]
 
@@ -528,7 +528,7 @@ async def test_support_follow_up_sees_previous_device_status_without_calling_too
 
 
 async def test_support_instructions_have_no_status_section_before_status_check() -> None:
-    agent, model, _ = make_agent([tool_call(HANDOFF), answer("ممكن تقولي اسم الجهاز أو رقمه؟")])
+    agent, model, _ = make_agent([tool_call(HANDOFF), answer("ممكن تقولي اسم الجهاز؟")])
 
     await run(agent, "الجهاز مش شغال", history=[])
 
