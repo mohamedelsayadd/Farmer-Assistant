@@ -479,7 +479,7 @@ async def test_support_follow_up_sees_previous_device_status_without_calling_too
 
     instructions = model.calls[0][0]
     assert "# Device status already checked in this conversation" in instructions
-    assert json.dumps(DEVICES_STATUS, ensure_ascii=False) in instructions
+    assert json.dumps(DEVICES_STATUS, ensure_ascii=False, separators=(",", ":")) in instructions
     assert renile_client.status_calls == 0
 
 
@@ -494,7 +494,7 @@ async def test_support_instructions_have_no_status_section_before_status_check()
 async def test_support_hands_unrelated_message_back_to_farmer() -> None:
     history = [
         {"role": "user", "content": "الجهاز 7 مش شغال"},
-        {"role": "assistant", "content": "فريق الدعم الفني هيتواصل معاك في أقرب وقت.", "agent": SUPPORT_AGENT},
+        {"role": "assistant", "content": "متأكد إن الواي فاي في الموقع شغال؟", "agent": SUPPORT_AGENT},
     ]
     agent, model, renile_client = make_agent(
         [tool_call(HANDBACK), tool_call("get_current_readings", call_id="call-2"), answer("مفيش بيانات متاحة حالياً.")]
@@ -507,6 +507,76 @@ async def test_support_hands_unrelated_message_back_to_farmer() -> None:
     assert all(SUPPORT_MARKER not in call[0] for call in model.calls[1:])
     assert renile_client.current_calls == 1
     assert agent.memory.agents == [FARMER_AGENT]
+
+
+@pytest.mark.parametrize(
+    "flow_end_reply",
+    [
+        "فريق الدعم الفني هيتواصل معاك في أقرب وقت.",
+        "Technical support will contact you as soon as possible.",
+        "تاريخ تجديد باقة الجهاز انتهى، ومحتاج تشحن الباقة.",
+    ],
+)
+async def test_flow_end_reply_starts_next_turn_at_farmer(flow_end_reply: str) -> None:
+    history = [
+        {"role": "user", "content": "الجهاز 7 مش شغال"},
+        {"role": "assistant", "content": flow_end_reply, "agent": SUPPORT_AGENT},
+    ]
+    agent, model, _ = make_agent([answer("الطماطم والبسلة مناسبين للشتا.")])
+
+    result = await run(agent, "عايز أعرف أزرع إيه في الشتا", history=history)
+
+    assert result.response == "الطماطم والبسلة مناسبين للشتا."
+    assert len(model.calls) == 1
+    assert SUPPORT_MARKER not in model.calls[0][0]
+    assert agent.memory.agents == [FARMER_AGENT]
+
+
+def _status(connectivity: str | None, renew: str | None, expiration: str | None) -> dict:
+    device = {**DEVICES_STATUS["devices"][0]}
+    device.update(connectivityType=connectivity, connectivityRenewType=renew, expiration_date=expiration)
+    return {"devices": [device]}
+
+
+@pytest.mark.parametrize(
+    ("status", "reply"),
+    [
+        (_status("4G", "manual", "2026-10-01"), "تاريخ تجديد باقة الجهاز انتهى، ومحتاج تشحن الباقة."),
+        (_status("4G", "manual", "2026-12-31"), "هل الجهاز واصله كهربا كويس، واللمبة بتاعته منورة؟"),
+        (_status("4G", "automatic", None), "هل الجهاز واصله كهربا كويس، واللمبة بتاعته منورة؟"),
+        (_status(None, None, None), "الجهاز متوصل بالواي فاي ولا بشريحة 4G؟"),
+    ],
+)
+async def test_support_flow_sees_device_connectivity(status: dict, reply: str) -> None:
+    class StatusReNileClient(FakeReNileClient):
+        async def get_devices_status(self, jwt: str) -> dict:
+            self.status_calls += 1
+            return status
+
+    agent, model, renile_client = make_agent(
+        [tool_call(HANDOFF), tool_call("get_devices_status", call_id="call-2"), answer(reply), answer("next")],
+        renile_client=StatusReNileClient(),
+    )
+
+    result = await run(agent, "جهاز GreenHouse Control Unit واقف خالص", history=[])
+
+    assert result.response == reply
+    assert json.loads(result.tool_outputs[1].output) == status
+    assert agent.memory.agents == [SUPPORT_AGENT]
+
+    history = [
+        {"role": "user", "content": "جهاز GreenHouse Control Unit واقف خالص"},
+        {"role": "assistant", "content": reply, "agent": SUPPORT_AGENT},
+    ]
+    await run(agent, "أيوه", history=history)
+
+    instructions = model.calls[-1][0]
+    if reply.startswith("تاريخ تجديد"):
+        assert SUPPORT_MARKER not in instructions
+    else:
+        assert json.dumps(status, ensure_ascii=False, separators=(",", ":")) in instructions
+        assert "Today's date:" in instructions
+    assert renile_client.status_calls == 1
 
 
 async def test_untagged_history_starts_at_farmer_and_records_support_after_handoff() -> None:

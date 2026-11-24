@@ -6,7 +6,7 @@ from agents import Agent, ModelSettings, OpenAIChatCompletionsModel, RunContextW
 from openai import AsyncOpenAI
 
 from agent.prompts import SYSTEM_PROMPT
-from agent.support_prompts import SUPPORT_PROMPT
+from agent.support_prompts import FLOW_END_REPLIES, SUPPORT_PROMPT
 from agent.tools import SUPPORT_TOOLS, TOOLS, AgentContext
 from core.config import get_settings
 from memory.redis_memory import MemoryMessage
@@ -59,10 +59,9 @@ async def support_instructions(ctx: RunContextWrapper[AgentContext], agent: Agen
     )
     if status is None:
         return support_prompt()
-    return (
-        f"{support_prompt()}\n\n# Device status already checked in this conversation\n\n"
-        f"{json.dumps(status, ensure_ascii=False)}"
-    )
+    # Compact JSON: this payload is re-sent on every support turn.
+    compact_status = json.dumps(status, ensure_ascii=False, separators=(",", ":"))
+    return f"{support_prompt()}\n\n# Device status already checked in this conversation\n\n{compact_status}"
 
 
 support_agent = Agent[AgentContext](
@@ -94,9 +93,12 @@ AGENTS_BY_NAME = {agent.name: agent for agent in (farmer_agent, support_agent)}
 
 
 def starting_agent(history: list[MemoryMessage]) -> Agent[AgentContext]:
-    # Each request resumes at the agent that wrote the last reply, so a support follow-up stays with support.
+    # Each request resumes at the agent that wrote the last reply, so a support follow-up stays with support,
+    # except after a reply that ends the support flow: the farmer handles what comes next (and hands off again).
     for item in reversed(history):
         if item["role"] == "assistant":
+            if any(reply in item["content"] for reply in FLOW_END_REPLIES):
+                return farmer_agent
             return AGENTS_BY_NAME.get(item.get("agent", ""), farmer_agent)
     return farmer_agent
 
