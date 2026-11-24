@@ -61,6 +61,7 @@ class ChatService:
                     tool_cache=self._tool_cache,
                     plant_disease_client=self._plant_disease_client,
                     image=request.image,
+                    user_messages=[item["content"] for item in history if item["role"] == "user"] + [request.message],
                 )
                 response, agent_name = await self.run_agent(
                     starting_agent(history), context, build_messages(history, request.message, request.image)

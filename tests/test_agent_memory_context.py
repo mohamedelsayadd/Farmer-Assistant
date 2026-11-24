@@ -165,6 +165,9 @@ def test_support_prompt_registers_complaint_before_final_reply() -> None:
     assert "عشان أسجل الشكوى، ممكن اسمك ورقم تليفونك؟" in prompt
     assert "To register the complaint, could you share your name and phone number?" in prompt
     assert "Call register_complaint once" in prompt
+    assert "Never call register_complaint until the user has written their name and phone number" in prompt
+    assert "In the turn where you ask for them, call no tool." in prompt
+    assert '"missing": "name_and_phone", ask the contact question' in prompt
     assert '"invalid_field": "phone", ask for the phone number again only' in prompt
     assert "whether \"registered\" is true or false, reply with the Final Support Reply only" in prompt
     assert "AND the indicator light is on, go to Step 7." in prompt

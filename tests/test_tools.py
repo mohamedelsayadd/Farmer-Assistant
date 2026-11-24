@@ -343,9 +343,10 @@ async def test_plant_diseases_detection_tool_requires_an_image() -> None:
     assert context.plant_prediction is None
 
 
-def _complaint_context() -> AgentContext:
+def _complaint_context(user_messages: list[str] | None = None) -> AgentContext:
     context = _context(FakeToolCache({("get_devices_status", "{}"): BACKEND_DEVICES_STATUS}))
     context.renile_client = ReNileClient(build_settings())
+    context.user_messages = ["الجهاز واقف", "Ali 01001234567"] if user_messages is None else user_messages
     return context
 
 
@@ -415,3 +416,38 @@ async def test_register_complaint_timeout_is_logged_not_raised(
 
     assert json.loads(result) == {"registered": False}
     assert "complaint_failed conversation_id=conversation-1 error_type=ConnectTimeout" in caplog.text
+
+
+async def test_register_complaint_rejects_phone_the_user_never_typed(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    requests = _renile_client_answering(monkeypatch, {"id": "complaint-1"}, status_code=201)
+
+    result = await invoke(
+        register_complaint, _complaint_context(["الجهاز واقف", "أيوه"]), device="device-1", **COMPLAINT_ARGS
+    )
+
+    assert json.loads(result) == {"registered": False, "missing": "name_and_phone"}
+    assert requests == []
+    assert "complaint_phone_not_from_user conversation_id=conversation-1" in caplog.text
+    assert "01001234567" not in caplog.text
+
+
+@pytest.mark.parametrize(
+    ("typed", "phone"),
+    [("اسمي علي ٠١٠٠١٢٣٤٥٦٧", "01001234567"), ("Ali +20 100 123 4567", "+201001234567"), ("Ali 0100 123 4567", "01001234567")],
+)
+async def test_register_complaint_accepts_phone_the_user_typed(
+    monkeypatch: pytest.MonkeyPatch, typed: str, phone: str
+) -> None:
+    requests = _renile_client_answering(monkeypatch, {"id": "complaint-1"}, status_code=201)
+
+    result = await invoke(
+        register_complaint,
+        _complaint_context([typed]),
+        device="device-1",
+        **{**COMPLAINT_ARGS, "phone": phone},
+    )
+
+    assert json.loads(result) == {"registered": True}
+    assert len(requests) == 1

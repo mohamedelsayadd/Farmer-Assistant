@@ -1,7 +1,7 @@
 import json
 import logging
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 import httpx
@@ -18,6 +18,7 @@ logger = logging.getLogger(__name__)
 
 ToolResult = dict[str, Any] | list[dict[str, Any]]
 TOOL_FAILED_MESSAGE = "Tool failed temporarily."
+ARABIC_INDIC_DIGITS = str.maketrans("٠١٢٣٤٥٦٧٨٩", "0123456789")
 
 
 @dataclass
@@ -32,6 +33,8 @@ class AgentContext:
     image: UploadedImage | None = None
     # Set by plant_diseases_detection; ChatService lifts source/disease from it onto the response.
     plant_prediction: dict[str, Any] | None = None
+    # What the user actually typed (history + current message); register_complaint checks the phone against it.
+    user_messages: list[str] = field(default_factory=list)
 
 
 Context = RunContextWrapper[AgentContext]
@@ -136,6 +139,7 @@ async def get_devices_status(ctx: Context) -> str:
 @function_tool(failure_error_function=tool_failed)
 async def register_complaint(ctx: Context, device: str, name: str, phone: str, description: str) -> str:
     """Register a support complaint for one of the user's devices. Call it once, right before the Final Support Reply.
+    Never call it until the user has written their name and phone number in this conversation.
 
     Args:
         device: The device name or id exactly as shown in get_devices_status.
@@ -144,6 +148,12 @@ async def register_complaint(ctx: Context, device: str, name: str, phone: str, d
         description: Short Arabic summary of the problem and the check results.
     """
     context = ctx.context
+    # The model has invented contact details before: only a phone the user actually typed is accepted.
+    phone_digits = _digits(phone)
+    if not phone_digits or not any(phone_digits in _digits(message) for message in context.user_messages):
+        logger.warning("complaint_phone_not_from_user conversation_id=%s", context.conversation_id)
+        return _dump("register_complaint", {"registered": False, "missing": "name_and_phone"})
+
     # Only the user's own devices (from their JWT-scoped status) may get a complaint; the API checks existence only.
     status = await _cached(
         context, "get_devices_status", {}, lambda: context.renile_client.get_devices_status(context.jwt)
@@ -242,6 +252,10 @@ def resolve_device_id(raw_device_id: str, devices: list[dict[str, Any]]) -> str 
         if raw_device_id == str(index) or lowered_raw_device_id == device_name.casefold():
             return device_id
     return None
+
+
+def _digits(text: str) -> str:
+    return "".join(char for char in text.translate(ARABIC_INDIC_DIGITS) if char.isdigit())
 
 
 def _invalid_field(response: httpx.Response) -> str | None:

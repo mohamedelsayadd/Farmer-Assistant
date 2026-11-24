@@ -489,6 +489,26 @@ async def test_support_registers_complaint_then_gives_final_reply_and_ends_flow(
     assert starting_agent([*history, {"role": "assistant", "content": final, "agent": SUPPORT_AGENT}]) is farmer_agent
 
 
+async def test_support_complaint_with_invented_phone_is_not_registered() -> None:
+    history = [
+        {"role": "user", "content": "جهاز GreenHouse Control Unit واقف خالص، رقمي ٠١٠٠١٢٣٤٥٦٧"},
+        {"role": "assistant", "content": "هل الجهاز واصله كهربا كويس، واللمبة بتاعته منورة؟", "agent": SUPPORT_AGENT},
+    ]
+    cache = FakeToolCache({("get_devices_status", "{}"): DEVICES_STATUS})
+    invented = {"device": "GreenHouse Control Unit", "name": "أحمد", "phone": "01234567890", "description": "واقف"}
+    typed = {**invented, "phone": "01001234567"}
+    agent, _, renile_client = make_agent(
+        [tool_call("register_complaint", invented), tool_call("register_complaint", typed, call_id="call-2"), answer("done")],
+        tool_cache=cache,
+    )
+
+    result = await run(agent, "أيوه", history=history)
+
+    assert json.loads(result.tool_outputs[0].output) == {"registered": False, "missing": "name_and_phone"}
+    # The phone typed in an earlier user turn (Arabic-Indic digits) is accepted.
+    assert renile_client.complaints == [("device-7", "أحمد", "01001234567", "واقف")]
+
+
 async def test_support_follow_up_sees_previous_device_status_without_calling_tool() -> None:
     history = [
         {"role": "user", "content": "جهاز GreenHouse Control Unit مش شغال"},
