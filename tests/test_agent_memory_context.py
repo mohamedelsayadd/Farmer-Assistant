@@ -90,7 +90,8 @@ def test_system_prompt_hands_off_reported_support_problems() -> None:
 
     assert "# Customer Support Handoff" in prompt
     assert "The user's message reports a problem, however vague" in prompt
-    assert "Judge the meaning of the message, not keywords" in prompt
+    assert "whether or not the message names a device, sensor, or reading" in prompt
+    assert '"جهاز Pump Controller مش بيبعت أي قراءات"' in prompt
     assert '"عندي مشكلة في جهازي"' in prompt
     assert "Asking for readings is not a problem report; reporting a problem with readings is." in prompt
     assert '"هاتلي قراءات الجهاز"' in prompt
@@ -98,9 +99,9 @@ def test_system_prompt_hands_off_reported_support_problems() -> None:
     assert "answers the support agent's last question" in prompt
     assert "A tool result alone never starts a support transfer" in prompt
     assert "Requests for current or past readings always stay with you" in prompt
-    assert "when the user says their readings are missing, wrong, or strange, that is a problem report" in prompt
-    assert "## 0. Support problems first" in prompt
-    assert prompt.index("## 0. Support problems first") < prompt.index("## 1. No tools")
+    assert "Never answer it with the out-of-scope refusal" in prompt
+    assert "Problem reports are never refused" in prompt
+    assert prompt.index("# Customer Support Handoff") < prompt.index("# Source of Truth")
 
 
 def test_farmer_and_support_prompts_are_separate() -> None:
