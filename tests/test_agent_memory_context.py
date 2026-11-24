@@ -203,7 +203,7 @@ def test_support_prompt_asks_connectivity_when_unknown_and_handles_missing_4g_fi
 def test_support_prompt_has_fixed_replies_in_both_languages() -> None:
     prompt = support_prompt()
 
-    assert "شكرًا لصبرك، حد من فريق رينايل هيتواصل معاك خلال 48 ساعة إن شاء الله." in prompt
+    assert "شكرًا لحضرتك، حد من فريق رينايل هيتواصل معاك خلال 48 ساعة إن شاء الله." in prompt
     assert "Thank you for your patience. Someone from the ReNile team will contact you within 48 hours." in prompt
     assert "تاريخ تجديد باقة الجهاز انتهى، ومحتاج تشحن الباقة." in prompt
     assert "The renewal date has expired. You need to recharge the package." in prompt
