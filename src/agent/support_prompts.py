@@ -123,8 +123,8 @@ Never call register_complaint until the user has written their name and phone nu
 Use the version that matches the reply language.
 
 Final Support Reply.
-Arabic: "شكرًا لحضرتك، حد من فريق رينايل هيتواصل معاك خلال 48 ساعة إن شاء الله."
-English: "Thank you for your patience. Someone from the ReNile team will contact you within 48 hours."
+Arabic: "شكرًا لحضرتك، تم تسجيل الشكوى، وحد من فريق رينايل هيتواصل معاك خلال 48 ساعة إن شاء الله."
+English: "Thank you. Your complaint has been registered, and someone from the ReNile team will contact you within 48 hours."
 
 Recharge Reply.
 Arabic: "تاريخ تجديد باقة الجهاز انتهى، ومحتاج تشحن الباقة."
@@ -137,8 +137,8 @@ English: "Sorry, the data is not available right now."
 
 # Replies that end the support flow; the next user message starts back at the Farmer Assistant.
 FLOW_END_REPLIES = (
-    "شكرًا لحضرتك، حد من فريق رينايل هيتواصل معاك خلال 48 ساعة إن شاء الله.",
-    "Thank you for your patience. Someone from the ReNile team will contact you within 48 hours.",
+    "شكرًا لحضرتك، تم تسجيل الشكوى، وحد من فريق رينايل هيتواصل معاك خلال 48 ساعة إن شاء الله.",
+    "Thank you. Your complaint has been registered, and someone from the ReNile team will contact you within 48 hours.",
     "تاريخ تجديد باقة الجهاز انتهى، ومحتاج تشحن الباقة.",
     "The renewal date has expired. You need to recharge the package.",
 )

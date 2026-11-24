@@ -456,11 +456,11 @@ async def test_support_follow_up_starts_at_support_agent_without_handoff() -> No
         {"role": "user", "content": "جهاز GreenHouse Control Unit مش شغال"},
         {"role": "assistant", "content": "هل الجهاز واصله كهربا كويس، واللمبة بتاعته منورة؟", "agent": SUPPORT_AGENT},
     ]
-    agent, model, renile_client = make_agent([answer("شكرًا لحضرتك، حد من فريق رينايل هيتواصل معاك خلال 48 ساعة إن شاء الله.")])
+    agent, model, renile_client = make_agent([answer("شكرًا لحضرتك، تم تسجيل الشكوى، وحد من فريق رينايل هيتواصل معاك خلال 48 ساعة إن شاء الله.")])
 
     result = await run(agent, "أيوه", history=history)
 
-    assert result.response == "شكرًا لحضرتك، حد من فريق رينايل هيتواصل معاك خلال 48 ساعة إن شاء الله."
+    assert result.response == "شكرًا لحضرتك، تم تسجيل الشكوى، وحد من فريق رينايل هيتواصل معاك خلال 48 ساعة إن شاء الله."
     assert len(model.calls) == 1
     assert SUPPORT_MARKER in model.calls[0][0]
     # The agent tag stays in Redis: the model sees only role and content.
@@ -477,7 +477,7 @@ async def test_support_registers_complaint_then_gives_final_reply_and_ends_flow(
     ]
     cache = FakeToolCache({("get_devices_status", "{}"): DEVICES_STATUS})
     complaint = {"device": "GreenHouse Control Unit", "name": "علي", "phone": "01001234567", "description": "الجهاز واقف"}
-    final = "شكرًا لحضرتك، حد من فريق رينايل هيتواصل معاك خلال 48 ساعة إن شاء الله."
+    final = "شكرًا لحضرتك، تم تسجيل الشكوى، وحد من فريق رينايل هيتواصل معاك خلال 48 ساعة إن شاء الله."
     agent, _, renile_client = make_agent([tool_call("register_complaint", complaint), answer(final)], tool_cache=cache)
 
     result = await run(agent, "علي 01001234567", history=history)
@@ -556,8 +556,8 @@ async def test_support_hands_unrelated_message_back_to_farmer() -> None:
 @pytest.mark.parametrize(
     "flow_end_reply",
     [
-        "شكرًا لحضرتك، حد من فريق رينايل هيتواصل معاك خلال 48 ساعة إن شاء الله.",
-        "Thank you for your patience. Someone from the ReNile team will contact you within 48 hours.",
+        "شكرًا لحضرتك، تم تسجيل الشكوى، وحد من فريق رينايل هيتواصل معاك خلال 48 ساعة إن شاء الله.",
+        "Thank you. Your complaint has been registered, and someone from the ReNile team will contact you within 48 hours.",
         "تاريخ تجديد باقة الجهاز انتهى، ومحتاج تشحن الباقة.",
     ],
 )
@@ -628,11 +628,11 @@ async def test_untagged_history_starts_at_farmer_and_records_support_after_hando
         {"role": "user", "content": "جهاز GreenHouse Control Unit مش شغال"},
         {"role": "assistant", "content": "هل الجهاز واصله كهربا كويس، واللمبة بتاعته منورة؟"},
     ]
-    agent, model, _ = make_agent([tool_call(HANDOFF), answer("شكرًا لحضرتك، حد من فريق رينايل هيتواصل معاك خلال 48 ساعة إن شاء الله.")])
+    agent, model, _ = make_agent([tool_call(HANDOFF), answer("شكرًا لحضرتك، تم تسجيل الشكوى، وحد من فريق رينايل هيتواصل معاك خلال 48 ساعة إن شاء الله.")])
 
     result = await run(agent, "أيوه", history=history)
 
-    assert result.response == "شكرًا لحضرتك، حد من فريق رينايل هيتواصل معاك خلال 48 ساعة إن شاء الله."
+    assert result.response == "شكرًا لحضرتك، تم تسجيل الشكوى، وحد من فريق رينايل هيتواصل معاك خلال 48 ساعة إن شاء الله."
     assert SUPPORT_MARKER not in model.calls[0][0]
     assert SUPPORT_MARKER in model.calls[-1][0]
     assert model.calls[-1][1][:2] == history
