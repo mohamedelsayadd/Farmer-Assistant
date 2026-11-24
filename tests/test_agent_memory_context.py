@@ -100,6 +100,7 @@ def test_system_prompt_hands_off_reported_support_problems() -> None:
     assert "A tool result alone never starts a support transfer" in prompt
     assert "Requests for current or past readings always stay with you" in prompt
     assert "Never answer it with the out-of-scope refusal" in prompt
+    assert "The only way to transfer is to call `transfer_to_customer_support_agent`" in prompt
     assert "Problem reports are never refused" in prompt
     assert prompt.index("# Customer Support Handoff") < prompt.index("# Source of Truth")
 
@@ -115,7 +116,7 @@ def test_support_prompt_hands_non_support_messages_back_to_farmer() -> None:
 
     assert "# Leaving Support" in prompt
     assert "call transfer_to_farmer_assistant immediately and write nothing yourself" in prompt
-    assert "Never reply that you only handle device problems." in prompt
+    assert "The only way to hand back is to call `transfer_to_farmer_assistant`" in prompt
     assert "Short answers to your last support question" in prompt
     assert "never transfer those back" in prompt
 
@@ -180,6 +181,7 @@ def test_support_prompt_asks_connectivity_when_unknown_and_handles_missing_4g_fi
     assert "Is the device connected over WiFi or a 4G SIM?" in prompt
     assert "If connectivityRenewType or expiration_date is missing, continue to Step 5." in prompt
     assert "renewal fields apply only to 4G" in prompt
+    assert "even if the device has only one sensor" in prompt
 
 
 def test_support_prompt_has_fixed_replies_in_both_languages() -> None:
