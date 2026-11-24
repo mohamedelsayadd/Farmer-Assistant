@@ -478,7 +478,7 @@ async def test_support_registers_complaint_then_gives_final_reply_and_ends_flow(
     cache = FakeToolCache({("get_devices_status", "{}"): DEVICES_STATUS})
     complaint = {"device": "GreenHouse Control Unit", "name": "علي", "phone": "01001234567", "description": "الجهاز واقف"}
     final = "فريق الدعم الفني هيتواصل معاك في أقرب وقت."
-    agent, model, renile_client = make_agent([tool_call("register_complaint", complaint), answer(final)], tool_cache=cache)
+    agent, _, renile_client = make_agent([tool_call("register_complaint", complaint), answer(final)], tool_cache=cache)
 
     result = await run(agent, "علي 01001234567", history=history)
 
