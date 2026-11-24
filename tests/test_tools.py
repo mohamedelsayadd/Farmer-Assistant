@@ -435,7 +435,8 @@ async def test_register_complaint_rejects_phone_the_user_never_typed(
 
 @pytest.mark.parametrize(
     ("typed", "phone"),
-    [("اسمي علي ٠١٠٠١٢٣٤٥٦٧", "01001234567"), ("Ali +20 100 123 4567", "+201001234567"), ("Ali 0100 123 4567", "01001234567")],
+    [("اسمي علي ٠١٠٠١٢٣٤٥٦٧", "01001234567"), ("Ali +20 100 123 4567", "+201001234567"), ("Ali 0100 123 4567", "01001234567"),
+     ("Ali 01001234567", "+20 100 123 4567"), ("Ali 01001234567", "00201001234567"), ("Ali +201001234567", "01001234567")],
 )
 async def test_register_complaint_accepts_phone_the_user_typed(
     monkeypatch: pytest.MonkeyPatch, typed: str, phone: str

@@ -149,8 +149,9 @@ async def register_complaint(ctx: Context, device: str, name: str, phone: str, d
     """
     context = ctx.context
     # The model has invented contact details before: only a phone the user actually typed is accepted.
-    phone_digits = _digits(phone)
-    if not phone_digits or not any(phone_digits in _digits(message) for message in context.user_messages):
+    # Compared without the 0 / +20 / 0020 prefix, so "0100…" typed by the user matches "+20100…" sent by the model.
+    phone_digits = _local_phone(_digits(phone))
+    if len(phone_digits) < 7 or not any(phone_digits in _digits(message) for message in context.user_messages):
         logger.warning("complaint_phone_not_from_user conversation_id=%s", context.conversation_id)
         return _dump("register_complaint", {"registered": False, "missing": "name_and_phone"})
 
@@ -256,6 +257,10 @@ def resolve_device_id(raw_device_id: str, devices: list[dict[str, Any]]) -> str 
 
 def _digits(text: str) -> str:
     return "".join(char for char in text.translate(ARABIC_INDIC_DIGITS) if char.isdigit())
+
+
+def _local_phone(digits: str) -> str:
+    return digits.removeprefix("00").removeprefix("20").removeprefix("0")
 
 
 def _invalid_field(response: httpx.Response) -> str | None:
