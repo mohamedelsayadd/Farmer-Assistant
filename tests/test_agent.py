@@ -13,7 +13,7 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanE
 from openai.types.responses import ResponseFunctionToolCall, ResponseOutputMessage, ResponseOutputText
 from redis.exceptions import RedisError
 
-from agent.agent import FALLBACK_RESPONSE, MAX_TOOL_ROUNDS, farmer_agent, support_agent
+from agent.agent import FALLBACK_RESPONSE, MAX_TOOL_ROUNDS, farmer_agent, starting_agent, support_agent
 from agent.tools import TOOL_FAILED_MESSAGE, resolve_device_id
 from conftest import FakeToolCache
 from models.schemas.chat import ChatRequest, ChatResponse, UploadedImage
@@ -100,6 +100,7 @@ class FakeReNileClient:
         self.summary_device_ids: list[str] = []
         self.current_calls = 0
         self.status_calls = 0
+        self.complaints: list[tuple[str, str, str, str]] = []
 
     async def get_devices_ids(self, jwt: str) -> list[dict]:
         assert jwt == "runtime-jwt"
@@ -116,6 +117,10 @@ class FakeReNileClient:
         assert jwt == "runtime-jwt"
         self.status_calls += 1
         return DEVICES_STATUS
+
+    async def create_complaint(self, device_id: str, name: str, phone: str, description: str) -> dict:
+        self.complaints.append((device_id, name, phone, description))
+        return {"id": "complaint-1", "status": "new"}
 
     async def get_last_duration_summary(self, jwt: str, device_id: str, start_time: str) -> dict:
         assert jwt == "runtime-jwt"
@@ -406,7 +411,7 @@ def test_support_agent_is_a_handoff_not_a_tool() -> None:
     assert farmer_agent.handoffs == [support_agent]
     assert support_agent.name == "Customer Support Agent"
     assert "get_devices_status" not in {tool.name for tool in farmer_agent.tools}
-    assert {tool.name for tool in support_agent.tools} == {"get_devices_status"}
+    assert {tool.name for tool in support_agent.tools} == {"get_devices_status", "register_complaint"}
     assert support_agent.handoffs == [farmer_agent]
     assert "problem the user reports with their devices" in support_agent.handoff_description
 
@@ -463,6 +468,45 @@ async def test_support_follow_up_starts_at_support_agent_without_handoff() -> No
     assert result.tool_outputs == []
     assert renile_client.status_calls == 0
     assert agent.memory.agents == [SUPPORT_AGENT]
+
+
+async def test_support_registers_complaint_then_gives_final_reply_and_ends_flow() -> None:
+    history = [
+        {"role": "user", "content": "جهاز GreenHouse Control Unit واقف خالص"},
+        {"role": "assistant", "content": "عشان أسجل الشكوى، ممكن اسمك ورقم تليفونك؟", "agent": SUPPORT_AGENT},
+    ]
+    cache = FakeToolCache({("get_devices_status", "{}"): DEVICES_STATUS})
+    complaint = {"device": "GreenHouse Control Unit", "name": "علي", "phone": "01001234567", "description": "الجهاز واقف"}
+    final = "فريق الدعم الفني هيتواصل معاك في أقرب وقت."
+    agent, _, renile_client = make_agent([tool_call("register_complaint", complaint), answer(final)], tool_cache=cache)
+
+    result = await run(agent, "علي 01001234567", history=history)
+
+    assert result.response == final
+    assert renile_client.complaints == [("device-7", "علي", "01001234567", "الجهاز واقف")]
+    assert json.loads(result.tool_outputs[0].output) == {"registered": True}
+    assert renile_client.status_calls == 0
+    assert starting_agent([*history, {"role": "assistant", "content": final, "agent": SUPPORT_AGENT}]) is farmer_agent
+
+
+async def test_support_complaint_with_invented_phone_is_not_registered() -> None:
+    history = [
+        {"role": "user", "content": "جهاز GreenHouse Control Unit واقف خالص، رقمي ٠١٠٠١٢٣٤٥٦٧"},
+        {"role": "assistant", "content": "هل الجهاز واصله كهربا كويس، واللمبة بتاعته منورة؟", "agent": SUPPORT_AGENT},
+    ]
+    cache = FakeToolCache({("get_devices_status", "{}"): DEVICES_STATUS})
+    invented = {"device": "GreenHouse Control Unit", "name": "أحمد", "phone": "01234567890", "description": "واقف"}
+    typed = {**invented, "phone": "01001234567"}
+    agent, _, renile_client = make_agent(
+        [tool_call("register_complaint", invented), tool_call("register_complaint", typed, call_id="call-2"), answer("done")],
+        tool_cache=cache,
+    )
+
+    result = await run(agent, "أيوه", history=history)
+
+    assert json.loads(result.tool_outputs[0].output) == {"registered": False, "missing": "name_and_phone"}
+    # The phone typed in an earlier user turn (Arabic-Indic digits) is accepted.
+    assert renile_client.complaints == [("device-7", "أحمد", "01001234567", "واقف")]
 
 
 async def test_support_follow_up_sees_previous_device_status_without_calling_tool() -> None:

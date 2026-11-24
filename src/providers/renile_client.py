@@ -16,6 +16,8 @@ class ReNileClient:
         self._current_path = settings.renile_current_readings_path
         self._historical_path = settings.renile_historical_readings_path
         self._devices_summary_path = settings.renile_devices_summary_path
+        self._complaints_path = settings.renile_complaints_path
+        self._complaints_api_key = settings.renile_complaints_api_key
         self._timeout = settings.http_timeout_seconds
 
     async def get_current_readings(self, jwt: str) -> dict[str, Any]:
@@ -40,6 +42,24 @@ class ReNileClient:
             raise ValueError("Unexpected devices status response shape")
         logger.info("renile_devices_status_completed devices=%s", len(response["devices"]))
         return response
+
+    async def create_complaint(self, device_id: str, name: str, phone: str, description: str) -> dict[str, Any]:
+        # Authenticated by the service API key, not the user's JWT. Never retried: a retry could duplicate the complaint.
+        started_at = perf_counter()
+        body = {"device_id": device_id, "name": name, "phone": phone, "description": description}
+        async with httpx.AsyncClient(base_url=self._base_url, timeout=self._timeout) as client:
+            response = await client.post(
+                self._complaints_path, json=body, headers={"x-api-key": self._complaints_api_key}
+            )
+        logger.info(
+            "renile_complaint_completed path=%s device_id=%s status_code=%s latency_ms=%s",
+            self._complaints_path,
+            device_id,
+            response.status_code,
+            int((perf_counter() - started_at) * 1000),
+        )
+        response.raise_for_status()
+        return response.json()
 
     async def get_last_duration_summary(self, jwt: str, device_id: str, start_time: str) -> dict[str, Any]:
         logger.info(

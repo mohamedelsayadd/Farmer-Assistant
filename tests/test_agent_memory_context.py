@@ -139,14 +139,14 @@ def test_support_prompt_sensor_problem_skips_connection_and_power_checks() -> No
 
     assert "A. Sensor problem" in prompt
     assert "Do NOT ask about WiFi, renewal, power, or the indicator light" in prompt
-    assert "If the tool result confirms the missing or abnormal reading, immediately reply with the Final Support Reply" in prompt
+    assert "If the tool result confirms the missing or abnormal reading, go straight to Step 7." in prompt
     assert "B. Device problem" in prompt
 
 
 def test_support_prompt_orders_connection_checks_before_power() -> None:
     prompt = support_prompt()
 
-    steps = ["# Step 1.", "# Step 2.", "# Step 3. WIFI device", "# Step 4. 4G device", "# Step 5. Power check", "# Step 6."]
+    steps = ["# Step 1.", "# Step 2.", "# Step 3. WIFI device", "# Step 4. 4G device", "# Step 5. Power check", "# Step 6.", "# Step 7."]
     positions = [prompt.index(step) for step in steps]
     assert positions == sorted(positions)
     assert "same username and password that the device was previously connected to" in prompt
@@ -155,6 +155,22 @@ def test_support_prompt_orders_connection_checks_before_power() -> None:
     assert "If the expiration date has passed, reply with the Recharge Reply. STOP the flow." in prompt
     assert "Is the device receiving power properly, and is the indicator light on?" in prompt
     assert "Only if the user confirms BOTH" in prompt
+
+
+def test_support_prompt_registers_complaint_before_final_reply() -> None:
+    prompt = support_prompt()
+
+    assert "# Step 7. Register the complaint" in prompt
+    assert "Only reached from Step 2A or Step 6" in prompt
+    assert "عشان أسجل الشكوى، ممكن اسمك ورقم تليفونك؟" in prompt
+    assert "To register the complaint, could you share your name and phone number?" in prompt
+    assert "Call register_complaint once" in prompt
+    assert "Never call register_complaint until the user has written their name and phone number" in prompt
+    assert "In the turn where you ask for them, call no tool." in prompt
+    assert '"missing": "name_and_phone", ask the contact question' in prompt
+    assert '"invalid_field": "phone", ask for the phone number again only' in prompt
+    assert "whether \"registered\" is true or false, reply with the Final Support Reply only" in prompt
+    assert "AND the indicator light is on, go to Step 7." in prompt
 
 
 def test_support_prompt_handles_account_problems_before_device_identification() -> None:

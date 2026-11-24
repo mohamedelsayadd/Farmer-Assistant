@@ -34,6 +34,8 @@ BASE_ENV = {
     "RENILE_CURRENT_READINGS_PATH": "/api/v1/snapshot",
     "RENILE_HISTORICAL_READINGS_PATH": "/api/v1/data/",
     "RENILE_DEVICES_SUMMARY_PATH": "/api/v1/devices/summary",
+    "RENILE_COMPLAINTS_PATH": "/api/v1/complaints",
+    "RENILE_COMPLAINTS_API_KEY": "test-complaints-key",
     "PLANT_DISEASE_API_BASE_URL": "http://127.0.0.1:8002",
     "PLANT_DISEASE_PREDICT_PATH": "/api/v1/predict",
     "PLANT_DISEASE_MAX_IMAGE_BYTES": "5242880",
