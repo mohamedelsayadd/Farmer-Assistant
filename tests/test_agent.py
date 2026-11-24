@@ -479,7 +479,7 @@ async def test_support_follow_up_sees_previous_device_status_without_calling_too
 
     instructions = model.calls[0][0]
     assert "# Device status already checked in this conversation" in instructions
-    assert json.dumps(DEVICES_STATUS, ensure_ascii=False) in instructions
+    assert json.dumps(DEVICES_STATUS, ensure_ascii=False, separators=(",", ":")) in instructions
     assert renile_client.status_calls == 0
 
 
@@ -574,7 +574,7 @@ async def test_support_flow_sees_device_connectivity(status: dict, reply: str) -
     if reply.startswith("تاريخ تجديد"):
         assert SUPPORT_MARKER not in instructions
     else:
-        assert json.dumps(status, ensure_ascii=False) in instructions
+        assert json.dumps(status, ensure_ascii=False, separators=(",", ":")) in instructions
         assert "Today's date:" in instructions
     assert renile_client.status_calls == 1
 

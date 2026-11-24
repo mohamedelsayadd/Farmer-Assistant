@@ -59,10 +59,9 @@ async def support_instructions(ctx: RunContextWrapper[AgentContext], agent: Agen
     )
     if status is None:
         return support_prompt()
-    return (
-        f"{support_prompt()}\n\n# Device status already checked in this conversation\n\n"
-        f"{json.dumps(status, ensure_ascii=False)}"
-    )
+    # Compact JSON: this payload is re-sent on every support turn.
+    compact_status = json.dumps(status, ensure_ascii=False, separators=(",", ":"))
+    return f"{support_prompt()}\n\n# Device status already checked in this conversation\n\n{compact_status}"
 
 
 support_agent = Agent[AgentContext](
