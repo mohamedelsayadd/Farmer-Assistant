@@ -133,6 +133,45 @@ async def get_devices_status(ctx: Context) -> str:
     return _dump("get_devices_status", result)
 
 
+@function_tool(failure_error_function=tool_failed)
+async def register_complaint(ctx: Context, device: str, name: str, phone: str, description: str) -> str:
+    """Register a support complaint for one of the user's devices. Call it once, right before the Final Support Reply.
+
+    Args:
+        device: The device name or id exactly as shown in get_devices_status.
+        name: The user's name.
+        phone: The user's phone number.
+        description: Short Arabic summary of the problem and the check results.
+    """
+    context = ctx.context
+    # Only the user's own devices (from their JWT-scoped status) may get a complaint; the API checks existence only.
+    status = await _cached(
+        context, "get_devices_status", {}, lambda: context.renile_client.get_devices_status(context.jwt)
+    )
+    devices = [{"_id": item.get("id"), "name": item.get("name")} for item in status["devices"]]
+    device_id = resolve_device_id(str(device).strip(), devices)
+    if device_id is None:
+        logger.warning("complaint_unknown_device conversation_id=%s", context.conversation_id)
+        return _dump("register_complaint", {"registered": False, "devices": [item["name"] for item in devices]})
+
+    # API failures still end with the Final Support Reply, so they are reported here instead of via tool_failed.
+    try:
+        complaint = await context.renile_client.create_complaint(device_id, name, phone, description)
+    except httpx.HTTPStatusError as error:
+        if _invalid_field(error.response) == "phone":
+            logger.warning("complaint_invalid_phone conversation_id=%s", context.conversation_id)
+            return _dump("register_complaint", {"registered": False, "invalid_field": "phone"})
+        logger.error(
+            "complaint_failed conversation_id=%s status_code=%s", context.conversation_id, error.response.status_code
+        )
+        return _dump("register_complaint", {"registered": False})
+    except httpx.HTTPError as error:
+        logger.error("complaint_failed conversation_id=%s error_type=%s", context.conversation_id, type(error).__name__)
+        return _dump("register_complaint", {"registered": False})
+    logger.info("complaint_registered conversation_id=%s complaint_id=%s", context.conversation_id, complaint.get("id"))
+    return _dump("register_complaint", {"registered": True})
+
+
 TOOLS = [
     plant_diseases_detection,
     get_current_readings,
@@ -141,7 +180,7 @@ TOOLS = [
     get_specific_time_readings,
 ]
 
-SUPPORT_TOOLS = [get_devices_status]
+SUPPORT_TOOLS = [get_devices_status, register_complaint]
 
 
 async def _historical(
@@ -203,6 +242,16 @@ def resolve_device_id(raw_device_id: str, devices: list[dict[str, Any]]) -> str 
         if raw_device_id == str(index) or lowered_raw_device_id == device_name.casefold():
             return device_id
     return None
+
+
+def _invalid_field(response: httpx.Response) -> str | None:
+    if response.status_code != 400:
+        return None
+    try:
+        body = response.json()
+    except ValueError:
+        return None
+    return body.get("field") if isinstance(body, dict) else None
 
 
 def _dump(tool_name: str, result: Any) -> str:

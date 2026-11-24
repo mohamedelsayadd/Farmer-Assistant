@@ -18,6 +18,7 @@ from agent.tools import (
     get_last_duration_summary,
     get_specific_time_readings,
     plant_diseases_detection,
+    register_complaint,
 )
 from conftest import FakeToolCache, build_settings
 from models.schemas.chat import UploadedImage
@@ -39,7 +40,7 @@ def test_tool_schemas_do_not_expose_jwt_or_runtime() -> None:
 
 
 def test_exposed_tool_names() -> None:
-    assert {tool.name for tool in SUPPORT_TOOLS} == {"get_devices_status"}
+    assert {tool.name for tool in SUPPORT_TOOLS} == {"get_devices_status", "register_complaint"}
     assert {tool.name for tool in TOOLS} == {
         "plant_diseases_detection",
         "get_current_readings",
@@ -63,6 +64,13 @@ def test_historical_tool_schemas_are_safe(name: str) -> None:
     assert parameters["required"] == ["device_id", "start_time"]
     assert set(parameters["properties"]) == {"device_id", "start_time"}
     assert "data_type" not in parameters["properties"]
+
+
+def test_register_complaint_schema_has_only_complaint_fields() -> None:
+    parameters = SCHEMAS["register_complaint"]["parameters"]
+
+    assert set(parameters["properties"]) == {"device", "name", "phone", "description"}
+    assert "key" not in json.dumps(SCHEMAS["register_complaint"]).lower()
 
 
 BACKEND_CURRENT_READINGS = {
@@ -333,3 +341,77 @@ async def test_plant_diseases_detection_tool_requires_an_image() -> None:
 
     assert result == TOOL_FAILED_MESSAGE
     assert context.plant_prediction is None
+
+
+def _complaint_context() -> AgentContext:
+    context = _context(FakeToolCache({("get_devices_status", "{}"): BACKEND_DEVICES_STATUS}))
+    context.renile_client = ReNileClient(build_settings())
+    return context
+
+
+COMPLAINT_ARGS = {"name": "Ali", "phone": "01001234567", "description": "الجهاز واقف"}
+
+
+async def test_register_complaint_resolves_device_name_and_logs_only_the_id(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    caplog.set_level(logging.INFO)
+    requests = _renile_client_answering(monkeypatch, {"id": "complaint-1", "status": "new"}, status_code=201)
+
+    result = await invoke(register_complaint, _complaint_context(), device="device 1", **COMPLAINT_ARGS)
+
+    assert json.loads(result) == {"registered": True}
+    assert [json.loads(r.content)["device_id"] for r in requests] == ["device-1"]
+    assert "complaint_registered conversation_id=conversation-1 complaint_id=complaint-1" in caplog.text
+    for secret in ("01001234567", "Ali", "test-complaints-key", "runtime-jwt"):
+        assert secret not in caplog.text
+
+
+async def test_register_complaint_rejects_foreign_device_without_calling_api(monkeypatch: pytest.MonkeyPatch) -> None:
+    requests = _renile_client_answering(monkeypatch, {"id": "complaint-1"}, status_code=201)
+
+    result = await invoke(register_complaint, _complaint_context(), device="ffffffffffffffffffffffff", **COMPLAINT_ARGS)
+
+    assert json.loads(result) == {"registered": False, "devices": ["Device 1"]}
+    assert requests == []
+
+
+async def test_register_complaint_reports_invalid_phone(monkeypatch: pytest.MonkeyPatch) -> None:
+    body = {"error": "Invalid complaint", "field": "phone", "message": "phone must be 7-15 digits."}
+    _renile_client_answering(monkeypatch, body, status_code=400)
+
+    result = await invoke(register_complaint, _complaint_context(), device="device-1", **COMPLAINT_ARGS)
+
+    assert json.loads(result) == {"registered": False, "invalid_field": "phone"}
+
+
+@pytest.mark.parametrize(("status_code", "logged"), [(500, "status_code=500"), (401, "status_code=401")])
+async def test_register_complaint_api_failure_is_logged_not_raised(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, status_code: int, logged: str
+) -> None:
+    _renile_client_answering(monkeypatch, {"message": "error"}, status_code=status_code)
+
+    result = await invoke(register_complaint, _complaint_context(), device="device-1", **COMPLAINT_ARGS)
+
+    assert json.loads(result) == {"registered": False}
+    errors = [r.getMessage() for r in caplog.records if r.levelno == logging.ERROR]
+    assert errors == [f"complaint_failed conversation_id=conversation-1 {logged}"]
+    assert "01001234567" not in caplog.text
+
+
+async def test_register_complaint_timeout_is_logged_not_raised(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    real_client = httpx.AsyncClient
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectTimeout("timed out", request=request)
+
+    monkeypatch.setattr(
+        httpx, "AsyncClient", lambda **kwargs: real_client(transport=httpx.MockTransport(handler), **kwargs)
+    )
+
+    result = await invoke(register_complaint, _complaint_context(), device="device-1", **COMPLAINT_ARGS)
+
+    assert json.loads(result) == {"registered": False}
+    assert "complaint_failed conversation_id=conversation-1 error_type=ConnectTimeout" in caplog.text
