@@ -224,13 +224,15 @@ async def test_devices_status_tool_fetches_fresh_and_saves_result(caplog: pytest
     assert "runtime-jwt" not in caplog.text
 
 
-def _renile_client_answering(monkeypatch: pytest.MonkeyPatch, body: object) -> list[httpx.Request]:
+def _renile_client_answering(
+    monkeypatch: pytest.MonkeyPatch, body: object, status_code: int = 200
+) -> list[httpx.Request]:
     requests: list[httpx.Request] = []
     real_client = httpx.AsyncClient
 
     def handler(request: httpx.Request) -> httpx.Response:
         requests.append(request)
-        return httpx.Response(200, json=body)
+        return httpx.Response(status_code, json=body)
 
     monkeypatch.setattr(
         httpx, "AsyncClient", lambda **kwargs: real_client(transport=httpx.MockTransport(handler), **kwargs)
@@ -255,6 +257,27 @@ async def test_renile_devices_status_rejects_unexpected_shape(monkeypatch: pytes
 
     with pytest.raises(ValueError):
         await ReNileClient(build_settings()).get_devices_status("runtime-jwt")
+
+
+async def test_renile_create_complaint_posts_with_api_key_not_jwt(monkeypatch: pytest.MonkeyPatch) -> None:
+    requests = _renile_client_answering(monkeypatch, {"id": "complaint-1", "status": "new"}, status_code=201)
+
+    response = await ReNileClient(build_settings()).create_complaint("device-1", "Ali", "01001234567", "وصف")
+
+    assert response == {"id": "complaint-1", "status": "new"}
+    [request] = requests
+    assert (request.method, request.url.path, request.headers["x-api-key"]) == (
+        "POST",
+        "/api/v1/complaints",
+        "test-complaints-key",
+    )
+    assert "Authorization" not in request.headers
+    assert json.loads(request.content) == {
+        "device_id": "device-1",
+        "name": "Ali",
+        "phone": "01001234567",
+        "description": "وصف",
+    }
 
 
 async def test_last_duration_summary_tool_returns_processed_api_response() -> None:
